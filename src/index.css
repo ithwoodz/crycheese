@@ -413,6 +413,15 @@
 
 @media (max-width: 720px) {
   .sidebar { display: none; }
+  .sidebar.open { display: flex; width: 236px; box-shadow: 8px 0 30px rgba(16,24,40,.25); }
+  .sidebar.open .brand { justify-content: flex-start; padding: 0 28px; }
+  .sidebar.open .brand-copy, .sidebar.open .side-nav button span, .sidebar.open .sidebar-footer > button { display: flex; }
+  .sidebar.open .side-nav button em { display: grid; }
+  .sidebar.open .profile > span:nth-child(2) { display: flex; }
+  .sidebar.open .profile > svg { display: block; }
+  .sidebar.open .side-nav button { justify-content: flex-start; padding: 0 14px; }
+  .sidebar.open .profile { justify-content: flex-start; padding: 18px 6px 0; }
+  .sidebar-backdrop { position: fixed; inset: 0; z-index: 19; background: rgba(16,24,40,.45); }
   .dashboard-main { margin-left: 0; }
   .topbar { padding: 0 18px; }
   .mobile-menu { display: block; margin-right: 10px; }

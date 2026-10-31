@@ -283,17 +283,19 @@ function WeeklyReportView({ reports }: { reports: ReportItem[] }) {
 function Dashboard({ onSwitch, costs, reports, managerIssues }: { onSwitch: () => void; costs: CostItem[]; reports: ReportItem[]; managerIssues: IssueItem[] }) {
   const [active, setActive] = useState('현황')
   const [notice, setNotice] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   return (
     <div className="dashboard-shell">
-      <aside className="sidebar">
+      {menuOpen && <div className="sidebar-backdrop" onClick={() => setMenuOpen(false)} />}
+      <aside className={menuOpen ? 'sidebar open' : 'sidebar'}>
         <div className="brand">
           <span className="brand-mark"><span /><span /><span /></span>
           <span className="brand-copy"><b>RUNN</b><small>STORE OPS</small></span>
         </div>
         <nav className="side-nav" aria-label="SV 메뉴">
           {navItems.map((item) => (
-            <button key={item.label} className={active === item.label ? 'active' : ''} onClick={() => setActive(item.label)}>
+            <button key={item.label} className={active === item.label ? 'active' : ''} onClick={() => { setActive(item.label); setMenuOpen(false) }}>
               <Icon name={item.icon} size={19} />
               <span>{item.label}</span>
               {item.label === '이슈 보드' && <em>7</em>}
@@ -312,7 +314,7 @@ function Dashboard({ onSwitch, costs, reports, managerIssues }: { onSwitch: () =
 
       <main className="dashboard-main">
         <header className="topbar">
-          <button className="mobile-menu"><Icon name="menu" /></button>
+          <button className="mobile-menu" onClick={() => setMenuOpen(true)} aria-label="메뉴 열기" aria-expanded={menuOpen}><Icon name="menu" /></button>
           <div className="search-box"><Icon name="search" size={18} /><input aria-label="검색" placeholder="매장, 이슈 검색" /></div>
           <div className="top-actions">
             <button className="role-pill" onClick={onSwitch}>점장 화면</button>
