@@ -1,10 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
-import {
-  createHmac,
-  randomBytes,
-  randomUUID,
-  timingSafeEqual,
-} from "node:crypto"
+import { randomUUID, timingSafeEqual } from "node:crypto"
+import { ApiError, createAccountAuth } from "./auth.js"
 import type { Plugin } from "vite"
 import {
   addDays,
@@ -21,14 +17,6 @@ import {
   type Metrics,
 } from "../src/domain.js"
 
-class ApiError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message)
-  }
-}
 const validStores = ["S01", "S02", "S03"]
 function checkedDay(value: unknown): string {
   const date = String(value || "")
@@ -104,43 +92,8 @@ async function body(req: IncomingMessage): Promise<Row> {
 export function createRunnMiddleware(env: Record<string, string>) {
   const base = env.SUPABASE_URL?.replace(/\/$/, "")
   const key = env.SUPABASE_SECRET_KEY
-  const cookieSecret = randomBytes(32)
+  const auth = createAccountAuth(env)
   let referenceCache: { expires: number; data: Row } | undefined
-  const sign = (v: string) =>
-    createHmac("sha256", cookieSecret).update(v).digest("base64url")
-  function readSession(req: IncomingMessage): Session {
-    const cookie = req.headers.cookie
-      ?.split("; ")
-      .find((v) => v.startsWith("runn_review="))
-      ?.slice(12)
-    if (cookie) {
-      try {
-        const [value, signature] = cookie.split(".")
-        const expected = sign(value)
-        if (
-          signature?.length === expected.length &&
-          timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
-        ) {
-          const s = JSON.parse(Buffer.from(value, "base64url").toString())
-          if (
-            ["manager", "sv"].includes(s.role) &&
-            validStores.includes(s.storeId)
-          )
-            return s
-        }
-      } catch {
-        /* A server restart safely resets the local review session. */
-      }
-    }
-    return { role: "manager", storeId: "S03" }
-  }
-  function setSession(res: ServerResponse, session: Session) {
-    const value = Buffer.from(JSON.stringify(session)).toString("base64url")
-    res.setHeader(
-      "Set-Cookie",
-      `runn_review=${value}.${sign(value)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`,
-    )
-  }
   async function db(
     path: string,
     method = "GET",
@@ -474,12 +427,11 @@ export function createRunnMiddleware(env: Record<string, string>) {
       throw new ApiError(403, "선택한 매장에 접근할 수 없습니다.")
   }
   const actor = (s: Session) =>
-    s.role === "sv" ? "SV (로컬 검토)" : "점장 (로컬 검토)"
+    `${s.username || (s.role === "sv" ? "SV" : "점장")}`
   async function handle(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url!, "http://localhost")
     const route = url.pathname.replace(/^\/api/, "")
     const method = req.method || "GET"
-    const session = readSession(req)
     const peer = req.socket.remoteAddress
     if (
       !env.VERCEL &&
@@ -499,19 +451,14 @@ export function createRunnMiddleware(env: Record<string, string>) {
       if (req.headers["x-runn-client"] !== "local-review")
         throw new ApiError(403, "검토 화면에서 다시 시도하세요.")
     }
+    if (route === "/auth/stores" && method === "GET")
+      return (await read("t2_c01_stores")).map((s: Row) => ({ store_id: s.store_id, store_name: s.store_name }))
+    if (route === "/auth/signup" && method === "POST") return auth.signup(req, await body(req))
+    if (route === "/auth/login" && method === "POST") return auth.login(req, res, await body(req))
+    if (route === "/auth/logout" && method === "POST") return auth.logout(req, res)
+    const session = await auth.read(req, res)
     if (route === "/session") {
-      if (method === "POST") {
-        const p = await body(req)
-        if (
-          !["manager", "sv"].includes(p.role) ||
-          !validStores.includes(p.storeId)
-        )
-          throw new ApiError(400, "역할 또는 매장을 확인하세요.")
-        const next = { role: p.role, storeId: p.storeId } as Session
-        setSession(res, next)
-        return next
-      }
-      setSession(res, session)
+      if (method !== "GET") throw new ApiError(403, "역할과 담당 매장은 가입한 계정에 따라 적용됩니다.")
       return session
     }
     if (route === "/health") {
@@ -521,11 +468,10 @@ export function createRunnMiddleware(env: Record<string, string>) {
         storeCount: stores.length,
         project: "pehmjliapqdlmxijmggq",
         aiConnected: false,
-        mode: "local-review",
+        mode: "authenticated",
       }
     }
     if (route === "/bootstrap" && method === "GET") {
-      setSession(res, session)
       return snapshot(
         session,
         checkedDay(url.searchParams.get("date") || "2026-08-12"),

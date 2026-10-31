@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { request } from './api'
 import { addDays, applyCheck, validDay, type Issue, type Row, type Snapshot } from './domain'
 import { BrandLogo } from './BrandLogo'
+import { useAccount } from './Account'
 
 export type LiveDialog = { type: 'date' | 'settings' | 'order' | 'measurement' | 'report' | 'issue' | 'issues'; issue?: Issue; report?: Row }
 type PendingCheck = { store: string; date: string; item: string; desired: boolean; saved: boolean; note:string; savedNote:string }
@@ -11,7 +12,7 @@ type LiveContext = {
   setDate: (date: string) => void; reload: () => Promise<void>
   run: (task: () => Promise<unknown>, message: string) => Promise<boolean>
   saveCheck: (item: string, done: boolean, status?: 'ok'|'bad') => void
-  switchSession: (role: 'sv' | 'manager', store?: string) => Promise<boolean>
+  logout: () => Promise<void>
 }
 const Context = createContext<LiveContext | null>(null)
 export function useLive() {
@@ -45,6 +46,7 @@ export function storeCards(data: Snapshot) {
 
 // Data and persistence live outside the original presentation components.
 export function LiveProvider({ children }: { children: ReactNode }) {
+  const account = useAccount()
   const [date, changeDate] = useState(() => {
     try { const saved = localStorage.getItem('runn-review-date-v1'); return saved && validDay(saved) ? saved : '2026-08-12' } catch { return '2026-08-12' }
   })
@@ -125,5 +127,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }
   if (!data) return <div className="manager-bg"><div className="manager-shell"><header className="manager-header"><div className="manager-brand"><BrandLogo /><b>CRBU</b></div></header><main className="manager-main"><section className="manager-welcome">{loadError ? <><h1>운영 기록을 불러오지 못했어요</h1><p>{loadError}</p><button className="date-chip" onClick={() => void reload().catch(() => {})}>다시 시도</button></> : <h1>운영 기록을 불러오고 있어요</h1>}</section></main></div></div>
   return <Context.Provider value={{data,busy:busy || loading,message,dialog,open,notify,setDate,reload,run,saveCheck,
-    switchSession:(role,store=data.session.storeId) => run(() => request('/session',{method:'POST',body:{role,storeId:store}}),'')}}>{children}</Context.Provider>
+    logout: async () => {
+      if (pending.current.size || lock.current) { notify('저장을 마친 후 다시 시도해 주세요.'); return }
+      try { await account.logout() } catch (e) { notify((e as Error).message) }
+    }}}>{children}</Context.Provider>
 }

@@ -1,3 +1,6 @@
+export class RequestError extends Error {
+  constructor(public status: number, message: string) { super(message) }
+}
 export async function request<T>(
   path: string,
   options: { method?: string; body?: unknown; signal?: AbortSignal; keepalive?: boolean } = {},
@@ -14,7 +17,10 @@ export async function request<T>(
     signal: options.signal ?? AbortSignal.timeout(35000),
   })
   const data = await res.json()
-  if (!res.ok) throw new Error(data.error || `요청 실패 (${res.status})`)
+  if (!res.ok) {
+    if (res.status === 401 && !path.startsWith('/auth/')) window.dispatchEvent(new Event('crbu:unauthorized'))
+    throw new RequestError(res.status, data.error || `요청 실패 (${res.status})`)
+  }
   return data as T
 }
 export function downloadCsv(name: string, rows: Record<string, unknown>[]) {

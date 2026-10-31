@@ -1,3 +1,4 @@
+import { AccountProvider } from './Account'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { request, downloadCsv } from './api'
 import {managerItems,managerValues,managerStatuses,managerRows,judgeManagerMeasure,type CheckStatus} from './checklist'
@@ -408,7 +409,7 @@ function WeeklyReportView({ reports }: { reports: ReportItem[] }) {
   )
 }
 
-function Dashboard({ onSwitch, costs, reports, managerIssues }: { onSwitch: () => void; costs: CostItem[]; reports: ReportItem[]; managerIssues: IssueItem[] }) {
+function Dashboard({ onLogout, costs, reports, managerIssues }: { onLogout: () => void; costs: CostItem[]; reports: ReportItem[]; managerIssues: IssueItem[] }) {
   const live = useLive()
   const {data} = live
   const issues = data.issues.filter(activeIssue)
@@ -441,7 +442,7 @@ function Dashboard({ onSwitch, costs, reports, managerIssues }: { onSwitch: () =
         </header>
 
         <main className={`manager-main ${active === '매장 관리' ? 'compact-top' : ''}`}>
-          {active === 'MY PAGE' ? <SvMyPage onSwitch={onSwitch} onNotifySettings={() => setSvNotifyOpen(true)} /> : <>
+          {active === 'MY PAGE' ? <SvMyPage onLogout={onLogout} onNotifySettings={() => setSvNotifyOpen(true)} /> : <>
           {active !== '매장 관리' && <section className="manager-welcome">
             <p>{dayLabel(data.date)} · 담당 {data.stores.length}개 매장</p>
             <h1>{active === '현황' ? '안녕하세요, SV님' : active === '주간 보고서' ? '매장별 주간 보고서' : active}</h1>
@@ -569,17 +570,17 @@ function NotificationScreen({ notices, onBack }: { notices: Notice[]; onBack: ()
   )
 }
 
-function SvMyPage({ onSwitch, onNotifySettings }: { onSwitch: () => void; onNotifySettings: () => void }) {
+function SvMyPage({ onLogout, onNotifySettings }: { onLogout: () => void; onNotifySettings: () => void }) {
   const live = useLive()
   const { data } = live
   return (
     <section className="management-page">
       <div className="subpage-heading"><div><p>계정 및 담당 매장</p><h1>MY PAGE</h1><span>내 정보와 담당 매장을 관리하세요.</span></div></div>
-      <article className="profile-card-large"><Avatar text="SV" /><div><h2>매장 운영 SV</h2><p>슈퍼바이저 · 담당 {data.stores.length}개 매장</p><span>{data.stores.map(s => s.store_name).join(' · ')}</span></div><button onClick={() => live.open({type:'date'})}>기준일 변경</button></article>
+      <article className="profile-card-large"><Avatar text="SV" /><div><h2>{data.session.username || '매장 운영 SV'}</h2><p>슈퍼바이저 · 담당 {data.stores.length}개 매장</p><span>{data.stores.map(s => s.store_name).join(' · ')}</span></div><button onClick={() => live.open({type:'date'})}>기준일 변경</button></article>
       <div className="settings-list">
         <button onClick={() => live.open({type:'settings'})}><span className="panel-title-icon blue"><Icon name="store" size={18} /></span><div><b>담당 매장</b><small>매장 기본 정보와 영업시간</small></div><Icon name="chevron" size={17} /></button>
         <button onClick={onNotifySettings}><span className="panel-title-icon violet"><Icon name="bell" size={18} /></span><div><b>알림 설정</b><small>점장 이슈·보고서 알림 켜기/끄기</small></div><Icon name="chevron" size={17} /></button>
-        <button onClick={onSwitch}><span className="panel-title-icon green"><Icon name="users" size={18} /></span><div><b>점장 화면 보기</b><small>매장 점장 화면으로 전환</small></div><Icon name="chevron" size={17} /></button>
+        <button onClick={onLogout}><span className="panel-title-icon green"><Icon name="users" size={18} /></span><div><b>로그아웃</b><small>현재 계정에서 로그아웃</small></div><Icon name="chevron" size={17} /></button>
       </div>
     </section>
   )
@@ -1358,23 +1359,23 @@ function ReportPage({ costs, onToast, tab, setTab, ackedReplies, onAck, inventor
   )
 }
 
-function MyPage({ onSwitch, onNotifySettings }: { onSwitch: () => void; onNotifySettings: () => void }) {
+function MyPage({ onLogout, onNotifySettings }: { onLogout: () => void; onNotifySettings: () => void }) {
   const live = useLive()
   const {data} = live
   return (
     <section className="management-page">
       <div className="subpage-heading"><div><p>계정 및 매장 설정</p><h1>MY PAGE</h1><span>내 정보와 운영 설정을 관리하세요.</span></div></div>
-      <article className="profile-card-large"><Avatar text="점" /><div><h2>매장 점장</h2><p>{storeName(data,data.session.storeId)} · 점장</p><span>매장 운영</span></div></article>
+      <article className="profile-card-large"><Avatar text="점" /><div><h2>{data.session.username || '매장 점장'}</h2><p>{storeName(data,data.session.storeId)} · 점장</p><span>매장 운영</span></div></article>
       <div className="settings-list">
         <button onClick={() => live.open({type:'settings'})}><span className="panel-title-icon blue"><Icon name="store" size={18} /></span><div><b>매장 정보</b><small>{storeName(data,data.session.storeId)} 기본 정보</small></div><Icon name="chevron" size={17} /></button>
         <button onClick={onNotifySettings}><span className="panel-title-icon violet"><Icon name="bell" size={18} /></span><div><b>알림 설정</b><small>SV 요청·피드백·긴급 이슈 알림 켜기/끄기</small></div><Icon name="chevron" size={17} /></button>
-        <button onClick={onSwitch}><span className="panel-title-icon green"><Icon name="board" size={18} /></span><div><b>SV 대시보드 보기</b><small>담당 매장 현황 화면으로 전환</small></div><Icon name="chevron" size={17} /></button>
+        <button onClick={onLogout}><span className="panel-title-icon green"><Icon name="board" size={18} /></span><div><b>로그아웃</b><small>현재 계정에서 로그아웃</small></div><Icon name="chevron" size={17} /></button>
       </div>
     </section>
   )
 }
 
-function ManagerApp({ onSwitch, costs }: { onSwitch: () => void; costs: CostItem[] }) {
+function ManagerApp({ onLogout, costs }: { onLogout: () => void; costs: CostItem[] }) {
   const live = useLive()
   const {data} = live
   const issues = data.issues.filter(i => i.store_id === data.session.storeId && activeIssue(i))
@@ -1442,7 +1443,7 @@ function ManagerApp({ onSwitch, costs }: { onSwitch: () => void; costs: CostItem
         <header className="manager-header">
           <div className="manager-brand"><BrandLogo /><b>CRBU</b></div>
           <div className="manager-tools">
-            <button className="role-pill manager-role" onClick={onSwitch}>SV 대시보드</button>
+            <button className="role-pill manager-role" onClick={onLogout}>로그아웃</button>
             <button className="icon-button" aria-label="알림" onClick={() => setNoticeOpen(true)}>{managerNotices.length > 0 && <i />}<Icon name="bell" size={20} /></button>
             <Avatar text="점" />
           </div>
@@ -1500,7 +1501,7 @@ function ManagerApp({ onSwitch, costs }: { onSwitch: () => void; costs: CostItem
                 </div>
               </section>
             </>
-          ) : active === '관리' ? <ManagementPage onToast={live.notify} costs={costs} schedules={schedules} setSchedules={setSchedules} inventory={inventory} setInventory={setInventory} /> : active === '보고' ? <ReportPage costs={costs} onToast={live.notify} tab={reportTab} setTab={setReportTab} ackedReplies={ackedReplies} onAck={(key) => setAckedReplies(current => [...current, key])} inventory={inventory} /> : <MyPage onSwitch={onSwitch} onNotifySettings={() => setNotifyOpen(true)} />}
+          ) : active === '관리' ? <ManagementPage onToast={live.notify} costs={costs} schedules={schedules} setSchedules={setSchedules} inventory={inventory} setInventory={setInventory} /> : active === '보고' ? <ReportPage costs={costs} onToast={live.notify} tab={reportTab} setTab={setReportTab} ackedReplies={ackedReplies} onAck={(key) => setAckedReplies(current => [...current, key])} inventory={inventory} /> : <MyPage onLogout={onLogout} onNotifySettings={() => setNotifyOpen(true)} />}
         </main>
 
         {noticeOpen && <NotificationScreen notices={managerNotices} onBack={goHome} />}
@@ -1526,8 +1527,8 @@ function ConnectedApp() {
   const managerIssues: IssueItem[] = data.issues.filter(issue => issue.kind === 'manual' && activeIssue(issue)).map(issue => ({id:issue.id,title:issue.title,store:storeName(data,issue.store_id),sentAt:issue.business_date,summary:issue.description,urgency:issue.severity === 'critical' ? '긴급' : '일반'}))
   return <div className="mobile-frame"><div className="mobile-scroll">
     {data.session.role === 'sv'
-      ? <Dashboard onSwitch={() => void live.switchSession('manager')} costs={costs} reports={reports} managerIssues={managerIssues} />
-      : <ManagerApp onSwitch={() => void live.switchSession('sv')} costs={costs} />}
+      ? <Dashboard onLogout={() => void live.logout()} costs={costs} reports={reports} managerIssues={managerIssues} />
+      : <ManagerApp onLogout={() => void live.logout()} costs={costs} />}
     <LiveDialogs />
     {live.message && <div className="toast" role="status">{live.message}</div>}
   </div></div>
@@ -1631,4 +1632,4 @@ function LiveDialogs() {
   </div>
 }
 
-export default function App() { return <LiveProvider><ConnectedApp /></LiveProvider> }
+export default function App() { return <AccountProvider><LiveProvider><ConnectedApp /></LiveProvider></AccountProvider> }

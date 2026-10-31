@@ -1,25 +1,60 @@
 // Uses the running loopback app and live Supabase. Only self-created test rows are removed.
 import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
+import {createClient} from '@supabase/supabase-js'
 const base='http://127.0.0.1:5173';let cookie='';let checks=0
 async function api(path,method='GET',body,expected=200){
   const res=await fetch(base+'/api'+path,{method,headers:{'Content-Type':'application/json','X-Runn-Client':'local-review',Origin:base,Cookie:cookie},body:body===undefined?undefined:JSON.stringify(body)})
-  const next=res.headers.get('set-cookie');if(next)cookie=next.split(';')[0]
+  const jar=Object.fromEntries(cookie.split('; ').filter(Boolean).map(v=>{const i=v.indexOf('=');return [v.slice(0,i),v.slice(i+1)]}))
+  for(const next of res.headers.getSetCookie()){const pair=next.split(';')[0];const i=pair.indexOf('=');if(pair.slice(i+1))jar[pair.slice(0,i)]=pair.slice(i+1);else delete jar[pair.slice(0,i)]}
+  cookie=Object.entries(jar).map(([k,v])=>`${k}=${v}`).join('; ')
   const data=await res.json();assert.equal(res.status,expected,JSON.stringify(data));checks++;return data
 }
 const secret=process.env.SUPABASE_SECRET_KEY;const dbBase=process.env.SUPABASE_URL
 if(!secret||!dbBase)throw Error('Run with node --env-file=.env.local tests/integration.mjs')
 async function db(path,method='GET',body){const headers={apikey:secret,'Content-Type':'application/json',Prefer:'return=representation'};if(secret.startsWith('eyJ'))headers.Authorization='Bearer '+secret;const res=await fetch(dbBase+'/rest/v1/'+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});const text=await res.text();if(!res.ok)throw Error('Database test operation failed: '+res.status);return text?JSON.parse(text):null}
+const admin=createClient(dbBase,secret,{auth:{persistSession:false,autoRefreshToken:false}})
+const suffix=randomUUID().slice(0,8)
+const password='Test!'+randomUUID()
+const accounts={manager:'test.manager.'+suffix,sv:'test.sv.'+suffix}
+const createdAccounts=[]
+async function login(role){return api('/auth/login','POST',{username:accounts[role],password})}
 const cleanup={observations:[],actions:[],costs:[],reports:[],orders:[],check:null}
 try{
+  await api('/session','GET',undefined,401)
+  await api('/bootstrap?date=2026-08-12','GET',undefined,401)
+  const stores=await api('/auth/stores');assert.equal(stores.length,3)
+  await api('/auth/signup','POST',{username:accounts.manager,password:'short',role:'manager',storeId:'S03'},400)
+  await api('/auth/signup','POST',{username:accounts.manager,password,role:'admin',storeId:'S03'},400)
+  await api('/auth/signup','POST',{username:accounts.manager,password,role:'manager',storeId:'S99'},400)
+  for(const role of ['manager','sv']){
+    await api('/auth/signup','POST',{username:accounts[role],password,role,storeId:'S03'})
+    const session=await login(role);createdAccounts.push(session.userId)
+    assert.equal(session.role,role);assert.equal(session.username,accounts[role]);assert.equal(session.storeId,'S03')
+    const stored=await admin.auth.admin.getUserById(session.userId)
+    assert.equal(stored.data.user.app_metadata.role,role)
+    assert.equal(stored.data.user.app_metadata.username,accounts[role])
+  }
+  await api('/auth/signup','POST',{username:accounts.manager.toUpperCase(),password,role:'sv'},409)
+  await api('/auth/login','POST',{username:accounts.manager,password:'wrong-password'},401)
+  await login('manager')
+  await api('/session','POST',{role:'sv',storeId:'S01'},403)
+  assert.equal((await api('/session')).role,'manager')
+  const savedCookie=cookie;cookie='runn_review=forged';await api('/session','GET',undefined,401);cookie=savedCookie
+  cookie=cookie.split('; ').filter(v=>!v.startsWith('crbu_access=')).join('; ')
+  assert.equal((await api('/session')).role,'manager','refresh cookie restores validated role')
+  assert.ok(cookie.includes('crbu_access='))
+  await api('/auth/logout','POST',{})
+  await api('/session','GET',undefined,401)
+  await login('manager')
   const health=await api('/health');assert.equal(health.connected,true);assert.equal(health.aiConnected,false)
-  await api('/session','POST',{role:'sv',storeId:'S03'})
+  await login('sv')
   const all=await api('/bootstrap?date=2026-08-16')
   assert.equal(all.sourceFiles,51);assert.equal(all.metrics.reduce((n,m)=>n+m.taskTotal,0),1176,'full-week pagination must not stop at 1000 rows')
   assert.equal(all.quality.invalidCompletionDates,9)
   assert.equal(all.reports.filter(row=>row.read_only).length,3,'upstream weekly-report cards retain one latest imported report per store')
   assert.ok(all.reports.filter(row=>row.read_only).every(row=>row.business_date<=all.date))
-  await api('/session','POST',{role:'manager',storeId:'S03'})
+  await login('manager')
   const day=await api('/bootstrap?date=2026-08-12')
   const sourceSales=await db('t2_c03_store_daily_sales?select=sales_amount&store_id=eq.S03&date=gte.2026-08-10&date=lte.2026-08-12')
   assert.equal(day.metrics[0].sales,sourceSales.reduce((n,r)=>n+Number(r.sales_amount),0))
@@ -70,7 +105,7 @@ try{
   await change('request_verification');assert.equal(a.status,'awaiting_verification')
   assert.equal(a.note,'확')
   await change('verify',undefined,403)
-  await api('/session','POST',{role:'sv',storeId:'S03'})
+  await login('sv')
   await change('verify','   ',400)
   await change('verify',undefined,409,1)
   await change('reject');assert.equal(a.status,'in_progress')
@@ -89,7 +124,7 @@ try{
   await api('/reports/'+reportId,'PATCH',{reply:' '},400)
   await api('/reports/'+reportId,'PATCH',{reply:'확'})
   assert.equal((await db('runn_reports?id=eq.'+reportId))[0].reply,'확')
-  await api('/session','POST',{role:'manager',storeId:'S03'})
+  await login('manager')
   await api('/reports/'+reportId,'PATCH',{operation:'edit',title:'수',summary:'정'})
   assert.equal((await db('runn_reports?id=eq.'+reportId))[0].summary,'정')
   await api('/reports/'+reportId,'PATCH',{operation:'delete'})
@@ -104,12 +139,14 @@ try{
   await api('/checks','POST',{store_id:'S03',business_date:date,item_id:checkItem,done:false,note:'bad'})
   const abnormalCheck=(await api('/bootstrap?date='+date)).checks.find(c=>c.item_id===checkItem)
   assert.equal(abnormalCheck.done,false);assert.equal(abnormalCheck.note,'bad')
-  await api('/session','POST',{role:'manager',storeId:'S03'})
+  await login('manager')
   await api('/costs','POST',{...cost,id:randomUUID(),store_id:'S01'},403)
   assert.deepEqual(await db('t2_r03_temperature_records?store_id=eq.S03&date=eq.'+date+'&order=_source_row'),original,'the imported records must remain unchanged')
   const blocked=await fetch(base+'/api/costs',{method:'POST',headers:{Origin:'https://other-site.example','Content-Type':'application/json','X-Runn-Client':'local-review'},body:'{}'});assert.equal(blocked.status,403)
   console.log(JSON.stringify({passed:true,apiAssertions:checks,fullWeekTasks:1176,sourceDataPreserved:true,workflow:'assignment -> work -> remeasurement -> request -> reject -> request -> SV verification -> recurrence',aiConnected:false}))
 }finally{
+  for(const id of createdAccounts)await admin.auth.admin.deleteUser(id)
+
   for(const id of cleanup.observations)await db('runn_observations?id=eq.'+id,'DELETE')
   for(const id of cleanup.actions)if(id)await db('runn_actions?id=eq.'+id,'DELETE')
   for(const id of cleanup.costs)await db('runn_costs?id=eq.'+id,'DELETE')

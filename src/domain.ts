@@ -4,7 +4,7 @@ export type Role = "manager" | "sv"
 
 export type Result = "pass" | "fail" | "warning" | "unrated"
 
-export type Session = { role: Role; storeId: string }
+export type Session = { role: Role; storeId: string; userId?: string; username?: string }
 
 export type Issue = {
   id: string

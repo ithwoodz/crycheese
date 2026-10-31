@@ -879,3 +879,23 @@ label.inventory-check { display: flex; align-items: center; gap: 6px; color: #34
 .sv-report-actions button:disabled:not(.done) { opacity: .5; }
 .sv-reply-form > div { gap: 6px; }
 .sv-reply-form > div > button:not(.primary) { border: 1px solid #dfe3e9; border-radius: 7px; background: white; padding: 7px 11px; color: #5c6878; font-size: 10px; font-weight: 800; }
+
+/* Account screens use the existing CRBU palette, font and mobile frame. */
+.account-page { min-height: 100%; padding: 48px 24px 36px; background: #f7f8fa; }
+.account-heading { margin: 36px 0 28px; }
+.account-heading p { color: #0a6936; font-size: 13px; font-weight: 700; }
+.account-page h1 { margin: 8px 0 12px; font-size: 28px; font-weight: 800; }
+.account-heading span, .account-alternative { color: #667085; font-size: 13px; line-height: 1.7; }
+.account-form fieldset { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.account-form label { display: flex; flex-direction: column; gap: 8px; font-size: 13px; font-weight: 700; }
+.account-form input, .account-form select { width: 100%; min-height: 48px; border: 1px solid #dce1e7; border-radius: 10px; padding: 12px; background: white; color: #1e1e1e; font-size: 15px; font-weight: 400; }
+.account-form input:focus, .account-form select:focus { outline: 2px solid #0a6936; outline-offset: 2px; }
+.account-form small { font-size: 11px; color: #667085; font-weight: 400; }
+.account-submit { width: 100%; min-height: 48px; margin-top: 6px; border-radius: 10px; background: #0a6936; color: white; font-size: 15px; font-weight: 700; }
+.account-form fieldset:disabled, .account-alternative button:disabled { opacity: .65; }
+.account-error, .account-notice { padding: 12px; border-radius: 8px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.account-error { background: #fff0f0; color: #b42318; }
+.account-error button { display: block; text-decoration: underline; margin-top: 6px; }
+.account-notice { background: #e7f5eb; color: #0a6936; }
+.account-alternative { margin-top: 24px; text-align: center; }
+.account-alternative button { color: #0a6936; font-weight: 700; margin-left: 6px; }
