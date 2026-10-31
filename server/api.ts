@@ -1,3 +1,4 @@
+import { createReviewService } from "./reviews.js"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { randomUUID, timingSafeEqual } from "node:crypto"
 import { ApiError, createAccountAuth } from "./auth.js"
@@ -93,6 +94,7 @@ export function createRunnMiddleware(env: Record<string, string>) {
   const base = env.SUPABASE_URL?.replace(/\/$/, "")
   const key = env.SUPABASE_SECRET_KEY
   const auth = createAccountAuth(env)
+  const reviews = createReviewService(env)
   let referenceCache: { expires: number; data: Row } | undefined
   async function db(
     path: string,
@@ -457,6 +459,8 @@ export function createRunnMiddleware(env: Record<string, string>) {
     if (route === "/auth/login" && method === "POST") return auth.login(req, res, await body(req))
     if (route === "/auth/logout" && method === "POST") return auth.logout(req, res)
     const session = await auth.read(req, res)
+    if (route === "/reviews" && method === "GET") return reviews.analyze(session.storeId)
+    if (route === "/reviews/analyze" && method === "POST") return reviews.analyze(session.storeId, true)
     if (route === "/session") {
       if (method !== "GET") throw new ApiError(403, "역할과 담당 매장은 가입한 계정에 따라 적용됩니다.")
       return session

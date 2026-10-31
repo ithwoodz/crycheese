@@ -49,3 +49,9 @@ node --env-file=.env.local tests/integration.mjs
 통합 검증은 실행 중인 로컬 서버와 실제 데이터베이스를 사용합니다. 검증에서 만든 계정과 행만 정리하고 기존 원본 기록은 보존합니다. `npm run build` 산출물만 정적 호스팅하면 API가 없으므로 조회·저장이 동작하지 않습니다. 저장소의 `api/[...path].ts`와 `vercel.json`은 서버 API 배포 구성을 제공합니다.
 
 온라인 주소: https://crycheese-one.vercel.app/
+
+## 데모 리뷰 분석
+
+`crycheese-demo` 비공개 Supabase Storage 버킷에 18개 CSV 원본과 JSON 자료를 보관합니다. 기존 운영 테이블에는 섞지 않습니다. `DEMO_13_review_samples.csv`에서 로그인한 점장 매장의 최신 리뷰 날짜 기준 7일 자료를 읽어 Letsur Gateway의 `gpt-4o-mini`로 요약합니다. 기간·건수·평균 평점은 원본으로 계산합니다. 데모 리뷰임을 표시하며 DEMO_14의 고정 요약은 사용하지 않습니다.
+
+AI 결과는 원본 해시와 함께 비공개 버킷에 저장해 같은 자료의 중복 과금을 막습니다. `LETSUR_API_KEY` 서버 환경변수를 우선 사용하며, 배포 환경에는 서비스 키로 AES-256-GCM 암호화한 비공개 설정을 사용합니다. 키는 브라우저와 Git에 포함하지 않습니다. 새 CSV에 따라 자료가 바뀌면 리뷰 분석 버튼으로 새 요약을 생성합니다.

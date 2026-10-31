@@ -1219,15 +1219,36 @@ function ReportFeedbackList({ ackedReplies, onAck }: { ackedReplies: string[]; o
   )
 }
 
-// 리뷰 수집·AI 요약이 연결되기 전까지 쓰는 예시 내용입니다(원래 Figma 디자인 문구).
-const reviewInsight = {
-  summary: '전체 평점은 안정적이지만, 점심 시간대 대기 시간 관련 불만이 5건으로 늘었어요. 반면 직원 친절도에 대한 긍정 리뷰는 지난주보다 18% 증가했습니다.',
-  keywords: ['대기 시간 5건', '직원 친절 8건', '메뉴 누락 2건'],
-  actions: [
-    { title: '점심 피크(12~14시) 인력 1명 보강', reason: '대기 시간 불만 5건이 모두 점심 시간대에 몰려 있어요.' },
-    { title: '포장 전 메뉴 구성 재확인', reason: '메뉴 누락 리뷰 2건 · 포장 테이블에서 주문서와 한 번 더 대조해 주세요.' },
-    { title: '친절 응대 사례 팀 공유', reason: '친절 칭찬 리뷰 8건 · 오전 조회 때 공유하면 좋아요.' },
-  ],
+function ReviewSummary() {
+  const {data} = useLive()
+  const [result,setResult] = useState<Row | null>(null)
+  const [error,setError] = useState('')
+  const [busy,setBusy] = useState(false)
+  useEffect(() => {
+    const controller = new AbortController()
+    setResult(null);setError('')
+    void request<Row>('/reviews',{signal:controller.signal}).then(setResult).catch(e=>{if(!controller.signal.aborted)setError(e.message)})
+    return ()=>controller.abort()
+  },[data.session.storeId])
+  async function analyze() {
+    if(busy)return
+    setBusy(true);setError('')
+    try{setResult(await request<Row>('/reviews/analyze',{method:'POST',body:{},signal:AbortSignal.timeout(50000)}))}
+    catch(e){setError((e as Error).message)}finally{setBusy(false)}
+  }
+  return <>
+    <div className="report-review-heading"><div><h2>리뷰 확인</h2><p>{result?.start ? `${result.start} ~ ${result.end} · ${result.count}개 리뷰` : '고객 반응 요약과 추천 조치'}</p></div><Badge tone="neutral">데모 리뷰</Badge></div>
+    <article className="review-summary-card">
+      <div className="review-summary-top"><span><Icon name="sparkle" size={18}/></span><div><Badge tone="info">AI 요약</Badge><h2>리뷰 핵심</h2></div></div>
+      {error && <p role="alert">{error}</p>}
+      {!result && !error && <p>리뷰를 불러오고 있어요.</p>}
+      {result?.summary && <><p>{result.summary}</p><div className="review-keywords">{result.keywords.map((keyword:string)=><span key={keyword}>{keyword}</span>)}</div><div className="review-actions"><h3>추천 조치</h3>{result.actions.map((action:Row,index:number)=><div key={index}><b>{index+1}</b><p><strong>{action.title}</strong><span>{action.reason}</span></p></div>)}</div></>}
+      {result?.count === 0 && <p>분석할 리뷰가 없어요.</p>}
+      {result?.average != null && <p>평균 평점 {Number(result.average).toFixed(1)} / 5.0</p>}
+      <button className="date-chip" disabled={busy || result?.count === 0} onClick={()=>void analyze()}>{busy ? '분석 중…' : '리뷰 분석'}</button>
+      <small className="review-sample-note">가상 고객 리뷰를 바탕으로 AI가 작성한 요약입니다.{result?.generatedAt ? ` · ${new Date(result.generatedAt).toLocaleString('ko-KR')} 분석` : ''}</small>
+    </article>
+  </>
 }
 
 function ReportPage({ costs, onToast, tab, setTab, ackedReplies, onAck, inventory }: { costs: CostItem[]; onToast: (message: string) => void; tab: 'write' | 'feedback'; setTab: (tab: 'write' | 'feedback') => void; ackedReplies: string[]; onAck: (key: string) => void; inventory: InventoryRecord[] }) {
@@ -1302,17 +1323,7 @@ function ReportPage({ costs, onToast, tab, setTab, ackedReplies, onAck, inventor
         </article>
       </div>
       <CostPanel costs={costs} onToast={onToast} />
-      <div className="report-review-heading"><div><h2>리뷰 확인</h2><p>최근 7일 고객 반응 요약과 추천 조치</p></div><Badge tone="neutral">예시</Badge></div>
-      <article className="review-summary-card">
-        <div className="review-summary-top"><span><Icon name="sparkle" size={18} /></span><div><Badge tone="info">AI 요약</Badge><h2>이번 주 리뷰 핵심</h2></div></div>
-        <p>{reviewInsight.summary}</p>
-        <div className="review-keywords">{reviewInsight.keywords.map(keyword => <span key={keyword}>{keyword}</span>)}</div>
-        <div className="review-actions">
-          <h3>추천 조치</h3>
-          {reviewInsight.actions.map((action, index) => <div key={action.title}><b>{index + 1}</b><p><strong>{action.title}</strong><span>{action.reason}</span></p></div>)}
-        </div>
-        <small className="review-sample-note">리뷰 수집이 연결되기 전까지 예시 내용이 표시돼요.</small>
-      </article>
+      <ReviewSummary />
       </>}
       {history && <div className="report-modal-backdrop" onClick={() => setHistory(null)}>
         <div className="report-modal" onClick={(event) => event.stopPropagation()}>
