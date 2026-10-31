@@ -1,5 +1,7 @@
 {
-  "description": "A responsive web app with a clear dashboard that helps users monitor key information and manage tasks efficiently across devices.",
+  "title": "RUNN · 매장 운영 관리",
+  "language": "ko",
+  "description": "매장 점검과 운영 기록을 확인하고 필요한 조치를 관리하세요.",
   "robots": {
     "index": false
   },
