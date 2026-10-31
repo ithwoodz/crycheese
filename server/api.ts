@@ -19,7 +19,7 @@ import {
   type Snapshot,
   type Issue,
   type Metrics,
-} from "../src/domain"
+} from "../src/domain.js"
 
 class ApiError extends Error {
   constructor(
@@ -101,7 +101,7 @@ async function body(req: IncomingMessage): Promise<Row> {
   }
 }
 
-export function runnApi(env: Record<string, string>): Plugin {
+export function createRunnMiddleware(env: Record<string, string>) {
   const base = env.SUPABASE_URL?.replace(/\/$/, "")
   const key = env.SUPABASE_SECRET_KEY
   const cookieSecret = randomBytes(32)
@@ -481,7 +481,10 @@ export function runnApi(env: Record<string, string>): Plugin {
     const method = req.method || "GET"
     const session = readSession(req)
     const peer = req.socket.remoteAddress
-    if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(peer || ""))
+    if (
+      !env.VERCEL &&
+      !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(peer || "")
+    )
       throw new ApiError(
         403,
         "로컬 검토 서버는 이 컴퓨터에서만 사용할 수 있습니다.",
@@ -868,8 +871,32 @@ export function runnApi(env: Record<string, string>): Plugin {
     throw new ApiError(404, "요청한 기능을 찾을 수 없습니다.")
   }
   const middleware = async (req: IncomingMessage, res: ServerResponse) => {
+    if (env.RUNN_REVIEW_PASSWORD) {
+      const encoded = req.headers.authorization?.match(/^Basic (.+)$/i)?.[1]
+      let supplied = ""
+      try {
+        supplied = Buffer.from(encoded || "", "base64")
+          .toString()
+          .split(":")
+          .slice(1)
+          .join(":")
+      } catch {
+        supplied = ""
+      }
+      const expected = env.RUNN_REVIEW_PASSWORD
+      const valid =
+        supplied.length === expected.length &&
+        timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))
+      if (!valid) {
+        res.statusCode = 401
+        res.setHeader("WWW-Authenticate", 'Basic realm="RUNN Preview"')
+        res.setHeader("Content-Type", "application/json; charset=utf-8")
+        res.end(JSON.stringify({ error: "프리뷰 접근 비밀번호가 필요합니다." }))
+        return
+      }
+    }
     // Connect strips the mount prefix; restore it for explicit route matching.
-    req.url = "/api" + req.url
+    if (!req.url?.startsWith("/api")) req.url = "/api" + req.url
     res.setHeader("Content-Type", "application/json; charset=utf-8")
     res.setHeader("Cache-Control", "no-store")
     res.setHeader("X-Content-Type-Options", "nosniff")
@@ -897,6 +924,11 @@ export function runnApi(env: Record<string, string>): Plugin {
       )
     }
   }
+  return middleware
+}
+
+export function runnApi(env: Record<string, string>): Plugin {
+  const middleware = createRunnMiddleware(env)
   return {
     name: "runn-local-api",
     configureServer(server) {
