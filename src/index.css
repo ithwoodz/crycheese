@@ -1,7 +1,15 @@
 @import 'tailwindcss';
 
+@font-face {
+  font-family: 'Pretendard Variable';
+  src: url('/src/assets/fonts/PretendardVariable.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 @theme {
-  --font-sans: Pretendard, "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 @layer base {
@@ -18,7 +26,7 @@
     background: #dfe3ea;
   }
 
-  button, input {
+  button, input, textarea, select, option, optgroup, ::file-selector-button {
     font-family: inherit;
   }
 
@@ -255,7 +263,7 @@
 .bottom-nav button { display: flex; min-width: 58px; height: 60px; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #929aa6; }
 .bottom-nav button > span { position: relative; }.bottom-nav button i { position: absolute; top: -7px; right: -10px; display: grid; width: 16px; height: 16px; place-items: center; border-radius: 50%; background: #e34e4a; color: white; font-size: 8px; font-style: normal; font-weight: 800; }
 .bottom-nav small { font-size: 9px; font-weight: 700; }.bottom-nav button.active { color: #315dbd; }
-.toast { position: fixed; z-index: 50; bottom: 92px; left: 50%; display: flex; align-items: center; gap: 7px; border-radius: 8px; background: #172235; padding: 11px 16px; color: white; font-size: 11px; transform: translateX(-50%); box-shadow: 0 8px 24px rgba(10,20,35,.22); }
+.toast { position: fixed; z-index: 100; bottom: 92px; left: 50%; display: flex; width: max-content; max-width: calc(100% - 32px); overflow-wrap: anywhere; pointer-events: none; align-items: center; gap: 7px; border-radius: 8px; background: #172235; padding: 11px 16px; color: white; font-size: 11px; transform: translateX(-50%); box-shadow: 0 8px 24px rgba(10,20,35,.22); }
 .placeholder-page { display: flex; min-height: 70vh; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .placeholder-icon { display: grid; width: 58px; height: 58px; place-items: center; border-radius: 15px; background: #eaf0ff; color: #3f67c1; }
 .placeholder-page > p { margin-top: 19px; color: #8791a0; font-size: 11px; }.placeholder-page h1 { margin-top: 4px; font-size: 26px; font-weight: 850; }.placeholder-page > span:not(.placeholder-icon) { max-width: 360px; margin-top: 8px; color: #737f90; font-size: 12px; line-height: 1.6; }.placeholder-page button { display: flex; height: 40px; align-items: center; gap: 7px; border-radius: 8px; margin-top: 22px; background: #294f9f; padding: 0 16px; color: white; font-size: 11px; font-weight: 800; }
@@ -592,3 +600,14 @@
 .sv-shell .metric-card { min-height: 0; border-color: #e5e8ed; border-radius: 13px; }
 .sv-shell .panel, .sv-shell .analytics-panel { border-color: #e5e8ed; border-radius: 13px; }
 .sv-shell .notice-pop { top: 56px; right: 18px; }
+.submitted-actions { display: flex; flex: none; flex-direction: column; align-items: stretch; gap: 5px; }
+.submitted-actions > button:not(.command-button) { border: 1px solid #dfe3e9; border-radius: 7px; background: white; padding: 6px 10px; color: #5c6878; font-size: 9px; font-weight: 800; }
+.date-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid #dfe3e9; border-radius: 16px; margin-top: 12px; background: white; padding: 6px 11px; color: #4f5b6d; font-size: 10px; font-weight: 750; }
+.other-issues-link { display: flex; width: 100%; align-items: center; gap: 6px; border: 1px solid #f0d9d7; border-radius: 10px; margin-top: 10px; background: #fffafa; padding: 11px 13px; color: #b5443f; font-size: 11px; font-weight: 800; }
+.other-issues-link svg:last-child { margin-left: auto; }
+.command-note { display: grid; gap: 5px; margin-top: 12px; }
+.command-note span { color: #667285; font-size: 9px; font-weight: 800; }
+.command-note textarea { width: 100%; border: 1px solid #dfe3e9; border-radius: 8px; padding: 9px 10px; color: #17202f; font-size: 11px; outline: 0; resize: vertical; }
+.command-note textarea:focus { border-color: #6f8fd6; }
+.primary-action:disabled, .secondary-action:disabled { opacity: .5; cursor: not-allowed; }
+.schedule-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
