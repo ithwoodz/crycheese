@@ -1,0 +1,10 @@
+{
+  "description": "A responsive web app with a clear dashboard that helps users monitor key information and manage tasks efficiently across devices.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
