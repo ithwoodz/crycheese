@@ -60,6 +60,9 @@ export type Snapshot = {
   stores: Row[]
   standards: Row[]
   taskTemplates: Row[]
+  managerTemplates: Row[]
+  managerStandards: Row[]
+  managerRecords: Row[]
   expiryItems: Row[]
   equipmentItems: Row[]
   ingredients: Row[]
@@ -118,7 +121,7 @@ export function applyCheck(snapshot: Snapshot, store: string, date: string, item
   const existing = snapshot.checks.find(c => c.store_id === store && c.business_date === date && c.item_id === item)
   const source = snapshot.tasks.find(c => c.store_id === store && c.item_id === item)
   const before = existing ? existing.done : source?.done === 'Y'
-  const delta = Number(done) - Number(before)
+  const delta = source ? Number(done) - Number(before) : 0
   return {
     ...snapshot,
     checks: [...snapshot.checks.filter(c => !(c.store_id === store && c.business_date === date && c.item_id === item)),
@@ -214,7 +217,7 @@ export function deriveIssues(
       value: row.recorded === "N" ? null : Number(row.value_c),
       standard: item.standard,
       item_id: row.item_id,
-      source: { table: "t2_r03_temperature_records", ...row, template: item },
+      source: { ...row, table: row.source_table || "t2_r03_temperature_records", template: item },
     })
   }
 

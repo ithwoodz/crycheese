@@ -174,6 +174,7 @@ export function runnApi(env: Record<string, string>): Plugin {
       stores,
       standards,
       taskTemplates,
+      managerTemplates,
       expiryItems,
       equipmentItems,
       ingredients,
@@ -184,6 +185,7 @@ export function runnApi(env: Record<string, string>): Plugin {
       read("t2_c01_stores", "order=store_id"),
       read("t2_t04_temperature_standards", "order=item_id"),
       read("t2_t02_daily_task_template", "order=item_id"),
+      read("t2_t03_manager_check_template", "order=item_id"),
       read("t2_t05_expiry_items"),
       read("t2_t09_equipment_template"),
       read("t1_ingredients", "order=ingredient_id"),
@@ -195,6 +197,8 @@ export function runnApi(env: Record<string, string>): Plugin {
       stores,
       standards,
       taskTemplates,
+      managerTemplates,
+      managerStandards: managerTemplates.filter((item: Row) => item.input === '온도(℃)').map((item: Row) => ({item_id:item.item_id,item:item.task,storage:item.section,measure_time:item.time,standard:item.standard,min_c:Number(String(item.standard).match(/(-?\d+(?:\.\d+)?)\s*℃\s*이상/)?.[1]),max_c:null})),
       expiryItems,
       equipmentItems,
       ingredients,
@@ -239,6 +243,7 @@ export function runnApi(env: Record<string, string>): Plugin {
       sales,
       visits,
       importedReports,
+      managerRecords,
     ] = await Promise.all([
       read("t2_r03_temperature_records", atDay + "&order=item_id"),
       read("t2_r10_oil_acidity_records", atDay),
@@ -252,7 +257,7 @@ export function runnApi(env: Record<string, string>): Plugin {
       ),
       read("runn_observations", throughDay + "&order=created_at.desc"),
       read("runn_checks", `business_date=gte.${start}&business_date=lte.${date}${scope}`),
-      read("runn_actions", throughDay + "&order=updated_at.desc"),
+      read("runn_actions", throughDay + "&deleted_at=is.null&order=updated_at.desc"),
       read(
         "runn_action_events",
         `${scope.replace(/^&/, "")}${
@@ -263,7 +268,7 @@ export function runnApi(env: Record<string, string>): Plugin {
         "runn_costs",
         `business_date=gte.${monthStart}&business_date=lte.${date}${scope}&order=created_at.desc`,
       ),
-      read("runn_reports", throughDay + "&order=created_at.desc"),
+      read("runn_reports", throughDay + "&deleted_at=is.null&order=created_at.desc"),
       read("runn_order_drafts", throughDay + "&order=created_at.desc"),
       read("t1_inventory_daily", atDay),
       read("t1_inventory_lots_daily", atDay),
@@ -278,6 +283,7 @@ export function runnApi(env: Record<string, string>): Plugin {
         `date=lte.${date}${scope}&service_pct=not.is.null&order=date.desc`,
       ),
       read("t2_r14_weekly_reports", `week_start=lte.${date}${scope}&order=week_start.desc`),
+      read("t2_r02_manager_daily_checks", atDay + '&order=item_id'),
     ])
     const scopedStores = refs.stores.filter(
       (s: Row) => session.role === "sv" || s.store_id === session.storeId,
@@ -303,8 +309,8 @@ export function runnApi(env: Record<string, string>): Plugin {
     })
     const issues = deriveIssues(
       {
-        temperatures,
-        standards: refs.standards,
+        temperatures:[...temperatures,...managerRecords.filter(r => refs.managerStandards.some((s: Row) => s.item_id === r.item_id)).map(row => ({...row,recorded:row.done,source_table:'t2_r02_manager_daily_checks'}))],
+        standards: [...refs.standards,...refs.managerStandards],
         acid,
         expiry,
         findings,
@@ -395,6 +401,7 @@ export function runnApi(env: Record<string, string>): Plugin {
       loadedAt: new Date().toISOString(),
       ...refs,
       temperatures,
+      managerRecords,
       acid,
       expiry,
       tasks: dayTasks,
@@ -498,7 +505,7 @@ export function runnApi(env: Record<string, string>): Plugin {
       let title: string
       let source: Row
       if (p.kind === "temperature") {
-        const item = refs.standards.find((x: Row) => x.item_id === p.item_id)
+        const item = [...refs.standards,...refs.managerStandards].find((x: Row) => x.item_id === p.item_id)
         if (!item) throw new ApiError(400, "온도 항목이 올바르지 않습니다.")
         if (value < -100 || value > 300)
           throw new ApiError(
@@ -603,6 +610,7 @@ export function runnApi(env: Record<string, string>): Plugin {
             table: "runn_actions",
             description: text(p.note),
             category: text(p.category),
+            checklist_keys: Array.isArray(p.checklist_keys) ? p.checklist_keys.filter((key: unknown) => typeof key === 'string').slice(0,25).map((key:string) => text(key,120)) : [],
           },
         }
       }
@@ -627,8 +635,17 @@ export function runnApi(env: Record<string, string>): Plugin {
       const p = await body(req)
       const id = uuid(route.split("/")[2])
       const a = (await read("runn_actions", `id=eq.${id}`))[0]
-      if (!a) throw new ApiError(404, "조치를 찾을 수 없습니다.")
+      if (!a || a.deleted_at) throw new ApiError(404, "조치를 찾을 수 없습니다.")
       access(session, a.store_id)
+      if (['edit','delete'].includes(p.operation)) {
+        if (session.role !== 'manager' || a.kind !== 'manual') throw new ApiError(403,'직접 작성한 이슈만 수정할 수 있습니다.')
+        if (a.status === 'closed') throw new ApiError(409,'확인 완료된 이슈는 변경할 수 없습니다.')
+        if (p.operation === 'edit' && (!text(p.title) || !text(p.note))) throw new ApiError(400,'제목과 내용을 입력해 주세요.')
+        const patch = p.operation === 'delete' ? {deleted_at:new Date().toISOString(),version:a.version+1} : {title:text(p.title,200),source:{...a.source,description:text(p.note)},severity:p.severity === 'critical'?'critical':'warning',version:a.version+1,updated_at:new Date().toISOString()}
+        const changed = await db(`runn_actions?id=eq.${id}&version=eq.${a.version}`,'PATCH',patch)
+        if (!changed.length) throw new ApiError(409,'변경된 내용이 있습니다. 다시 확인해 주세요.')
+        return changed[0]
+      }
       if (["verify", "reject"].includes(p.operation) && session.role !== "sv")
         throw new ApiError(403, "SV 화면에서 검증하세요.")
       return db("rpc/runn_transition_action", "POST", {
@@ -651,7 +668,7 @@ export function runnApi(env: Record<string, string>): Plugin {
       if (typeof p.done !== "boolean")
         throw new ApiError(400, "완료 여부를 확인하세요.")
       const refs = await references()
-      if (!refs.taskTemplates.some((x: Row) => x.item_id === p.item_id))
+      if (![...refs.taskTemplates,...refs.managerTemplates].some((x: Row) => x.item_id === p.item_id))
         throw new ApiError(400, "점검 항목이 올바르지 않습니다.")
       return db(
         "runn_checks?on_conflict=store_id,business_date,item_id",
@@ -730,10 +747,18 @@ export function runnApi(env: Record<string, string>): Plugin {
       )
     }
     if (/^\/reports\/[0-9a-f-]+$/.test(route) && method === "PATCH") {
-      if (session.role !== "sv")
-        throw new ApiError(403, "SV만 보고서에 답변할 수 있습니다.")
       const p = await body(req)
       const id = uuid(route.split("/")[2])
+      const report=(await read('runn_reports',`id=eq.${id}`))[0]
+      if(!report || report.deleted_at) throw new ApiError(404,'보고서를 찾을 수 없습니다.')
+      access(session,report.store_id)
+      if(['edit','delete'].includes(p.operation)) {
+        if(session.role !== 'manager') throw new ApiError(403,'점장 화면에서 작성한 보고서를 수정하세요.')
+        if(p.operation === 'edit' && (!text(p.title)||!text(p.summary)))throw new ApiError(400,'제목과 내용을 입력해 주세요.')
+        return db(`runn_reports?id=eq.${id}`,'PATCH',p.operation === 'delete'?{deleted_at:new Date().toISOString()}:{title:text(p.title,200),summary:text(p.summary,10000)})
+      }
+      if (session.role !== "sv")
+        throw new ApiError(403, "SV만 보고서에 답변할 수 있습니다.")
       if (!text(p.reply))
         throw new ApiError(400, "검토 의견을 입력해 주세요.")
       return db(`runn_reports?id=eq.${id}`, "PATCH", {

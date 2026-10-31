@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { request, downloadCsv } from './api'
-import {checklistPhases, measureValues, judgeMeasure, measureLabel, type CheckStatus, type ChecklistPhase, type CheckGroup, type MeasureItem} from './checklist'
+import {managerItems,managerValues,managerStatuses,managerRows,judgeManagerMeasure,type CheckStatus} from './checklist'
+import {displayTimes,phaseOf,type ChecklistPhaseKey,type ManagerCheckItem} from './lib/managerChecklist'
 import { addDays, money, statusLabels, type Issue, type Row } from './domain'
 import { LiveProvider, useLive, activeIssue, dayChecks, dayLabel, shortDate, storeName, storeCards } from './live'
 
@@ -385,8 +386,7 @@ function StatusToggle({ label, status, onChange, disabled }: { label:string; sta
       aria-checked={status === 'ok'}
       aria-label={`${label} · ${status === 'ok' ? '정상' : status === 'bad' ? '비정상' : '미확인'}`}
       className={`status-toggle ${status ?? 'unset'}`}
-      disabled={disabled}
-      onClick={() => onChange(status === 'ok' ? 'bad' : 'ok')}
+      disabled={disabled} onClick={() => onChange(status === 'ok' ? 'bad' : 'ok')}
     >
       <i />
       <span>{status === 'ok' ? '정상' : status === 'bad' ? '비정상' : '미확인'}</span>
@@ -394,98 +394,192 @@ function StatusToggle({ label, status, onChange, disabled }: { label:string; sta
   )
 }
 
-function DailyChecklist({ onToast }: { onToast: (message: string) => void }) {
-  const live = useLive()
-  const {data} = live
-  const recordedValues = measureValues(data)
-  const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const saving = useRef(new Set<string>())
-  const [savingItems,setSavingItems] = useState<Set<string>>(new Set())
-  const [showOpen, setShowOpen] = useState(false)
-  const values = {...recordedValues,...drafts}
-  const phases = checklistPhases(data,dayChecks(data))
+// 측정 항목은 입력값으로 자동 판정하므로 누를 수 없는 표시용 상태입니다.
+function StatusIndicator({ status }: { status: CheckStatus }) {
+  const label = status === 'ok' ? '정상' : status === 'bad' ? '비정상' : '입력 대기'
+  return (
+    <span role="status" aria-label={label} className={`status-toggle readonly ${status ?? 'unset'}`}>
+      <i />
+      <span>{label}</span>
+    </span>
+  )
+}
 
-  const isPhaseDone = (phase: ChecklistPhase) =>
-    phase.measures.every((item) => judgeMeasure(item, recordedValues[item.id] ?? '') !== null) && phase.groups.every((group) => group.status)
-  const openPhase = phases[0]
-  const openDone = isPhaseDone(openPhase)
-  const visible = openDone ? phases : [openPhase]
-  const current = openDone ? phases[1] : openPhase
-  const total = current.measures.length + current.groups.length
-  const done = current.measures.filter((item) => judgeMeasure(item, values[item.id] ?? '') !== null).length + current.groups.filter((group) => group.status).length
-  const abnormal = visible.flatMap((phase) => [
-    ...phase.measures.filter((item) => judgeMeasure(item, values[item.id] ?? '') === 'bad').map((item) => item.label),
-    ...phase.groups.filter((group) => group.status === 'bad').map((group) => group.label),
-  ])
+type AbnormalEntry = { key: string; phase: string; label: string; options: string[]; evidence?: string }
 
-  function setStatus(group: CheckGroup, status: CheckStatus) {
-    if(status) live.saveCheck(group.id,status === 'ok',status)
+function ChecklistIssueModal({ entries, onClose, onSend }: { entries: AbnormalEntry[]; onClose: () => void; onSend: (picked: { entry: AbnormalEntry; items: string[] }[], memo: string, urgency: IssueItem['urgency']) => void }) {
+  const live=useLive()
+  // 측정 항목은 하위항목이 하나뿐이라 미리 선택해 둡니다.
+  const [picked, setPicked] = useState<Record<string, string[]>>(() => Object.fromEntries(entries.map((entry) => [entry.key, entry.options.length === 1 ? entry.options : []])))
+  const [memo, setMemo] = useState('')
+  const [urgency, setUrgency] = useState<IssueItem['urgency']>('긴급')
+  const selection = entries.map((entry) => ({ entry, items: picked[entry.key] ?? [] })).filter((item) => item.items.length > 0)
+
+  function toggle(entry: AbnormalEntry, option: string) {
+    setPicked((current) => {
+      const items = current[entry.key] ?? []
+      return { ...current, [entry.key]: items.includes(option) ? items.filter((item) => item !== option) : [...items, option] }
+    })
   }
 
-  async function saveMeasurement(item: MeasureItem) {
-    if(saving.current.has(item.id) || drafts[item.id] === undefined || drafts[item.id] === recordedValues[item.id]) return
-    const value = drafts[item.id]
-    if(judgeMeasure(item,value) === null) {onToast('측정값을 숫자로 입력해 주세요.');return}
+  return (
+    <div className="report-modal-backdrop">
+      <div className="report-modal issue-compose-modal">
+        <div className="report-modal-heading"><div><Badge tone="critical">SV 확인 요청</Badge><h2>체크리스트 이슈 전달</h2><p>문제가 있는 하위항목을 선택하면 바로 SV에게 전달돼요.</p></div><button onClick={onClose} aria-label="닫기"><Icon name="close" size={18} /></button></div>
+        <div className="report-form">
+          {entries.map((entry) => (
+            <div key={entry.key} className="issue-pick-group">
+              <div><Badge tone="critical">{entry.phase}</Badge><b>{entry.label}</b>{entry.evidence && <small>{entry.evidence}</small>}</div>
+              <div className="issue-pick-options">
+                {entry.options.map((option) => <button key={option} type="button" className={(picked[entry.key] ?? []).includes(option) ? 'active' : ''} onClick={() => toggle(entry, option)}>{(picked[entry.key] ?? []).includes(option) && <Icon name="arrow" size={11} />}{option}</button>)}
+              </div>
+            </div>
+          ))}
+          <label><span>추가 메모 (선택)</span><textarea rows={3} value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="현재 상황과 이미 시도한 조치를 입력해 주세요." /></label>
+          <div className="issue-urgency"><span>긴급도</span><div>{(['일반', '긴급'] as const).map((level) => <button key={level} type="button" className={urgency === level ? 'active' : ''} onClick={() => setUrgency(level)}>{level}</button>)}</div></div>
+        </div>
+        <div className="report-modal-actions"><button onClick={onClose}>취소</button><button className="issue-send" disabled={live.busy || selection.length === 0} onClick={() => onSend(selection, memo, urgency)}><Icon name="send" size={15} /> {selection.length ? `${selection.reduce((sum, item) => sum + item.items.length, 0)}개 항목 SV에게 전달` : '하위항목을 선택하세요'}</button></div>
+      </div>
+    </div>
+  )
+}
+
+function DailyChecklist({ onToast }: { onToast: (message: string) => void }) {
+  const live=useLive()
+  const {data}=live
+  const managerChecklist=managerItems(data)
+  const recordedValues=managerValues(data)
+  const [drafts,setDrafts]=useState<Record<string,string>>({})
+  const values={...recordedValues,...drafts}
+  const statuses=managerStatuses(data)
+  const saving=useRef(new Set<string>())
+  const [savingItems,setSavingItems]=useState<Set<string>>(new Set())
+  const [screen, setScreen] = useState<ChecklistPhaseKey | null>(null)
+  const [composing, setComposing] = useState(false)
+  const [localSentKeys, setSentKeys] = useState<string[]>([])
+  const sentKeys=[...localSentKeys,...data.actions.filter(a => a.store_id===data.session.storeId && a.business_date===data.date).flatMap(a => a.source?.checklist_keys || [])]
+
+  const times = displayTimes(managerChecklist)
+  const measures = managerChecklist.filter((item) => item.input === '온도(℃)')
+  const itemsOf = (key: ChecklistPhaseKey) => managerChecklist.filter((item) => phaseOf(item) === key)
+  const doneCount = (key: ChecklistPhaseKey) => itemsOf(key).filter((item) => statuses[item.id]).length
+  const isComplete = (key: ChecklistPhaseKey) => doneCount(key) === itemsOf(key).length
+
+  const abnormal: AbnormalEntry[] = managerChecklist.filter((item) => statuses[item.id] === 'bad').map((item) => ({
+    key: item.input === '온도(℃)' ? `${item.id}:${values[item.id] ?? ''}` : item.id,
+    phase: phaseOf(item) === 'open' ? '오픈' : '마감',
+    label: item.task.replace(/^\*\*/, ''),
+    options: [item.input === '온도(℃)' && values[item.id] ? `${item.task} ${values[item.id]}℃` : item.task.replace(/^\*\*/, '')],
+    evidence: item.standard ? `기준 ${item.standard}` : undefined,
+  }))
+  const unsent = abnormal.filter((entry) => !sentKeys.includes(entry.key))
+
+  function measure(item: ManagerCheckItem, raw: string) {setDrafts(current => ({...current,[item.id]:raw}))}
+  function setStatus(item: ManagerCheckItem, status: CheckStatus) {if(status)live.saveCheck(item.id,status==='ok',status)}
+  async function saveMeasurement(item: ManagerCheckItem) {
+    const value=drafts[item.id]
+    if(saving.current.has(item.id)||value===undefined||value===recordedValues[item.id])return
+    if(judgeManagerMeasure(item,value)===null){onToast('측정값을 숫자로 입력해 주세요.');return}
     saving.current.add(item.id);setSavingItems(new Set(saving.current))
     try {
-      await request('/observations',{method:'POST',body:{id:crypto.randomUUID(),store_id:data.session.storeId,business_date:data.date,kind:item.kind,item_id:item.item_id,value:Number(value),note:'일일 체크리스트 측정'}})
+      await request('/observations',{method:'POST',body:{id:crypto.randomUUID(),store_id:data.session.storeId,business_date:data.date,kind:'temperature',item_id:item.id,value:Number(value),note:'관리자 일일 체크리스트 측정'}})
       await live.reload()
       setDrafts(current => {const next={...current};delete next[item.id];return next})
       onToast('측정값을 기록했어요.')
-    } catch(error) {onToast((error as Error).message)}
-    finally {saving.current.delete(item.id);setSavingItems(new Set(saving.current))}
+    } catch(error){onToast((error as Error).message)}
+    finally{saving.current.delete(item.id);setSavingItems(new Set(saving.current))}
+  }
+  async function sendIssue(picked: { entry: AbnormalEntry; items: string[] }[], memo: string, urgency: IssueItem['urgency']) {
+    const items=picked.flatMap(item=>item.items)
+    const ok=await live.run(()=>request('/actions',{method:'POST',body:{id:crypto.randomUUID(),store_id:data.session.storeId,business_date:data.date,title:picked.length===1?`${picked[0].entry.label} 비정상`:`체크리스트 비정상 ${picked.length}건`,note:[`${picked[0].entry.phase} 체크: ${items.join(', ')}`,memo.trim()].filter(Boolean).join(' · '),severity:urgency==='긴급'?'critical':'warning',category:'관리자 체크리스트',checklist_keys:picked.map(item=>item.entry.key)}}),'SV에게 이슈를 전달했어요')
+    if(ok){setSentKeys(current=>[...current,...picked.map(item=>item.entry.key)]);setComposing(false)}
   }
 
-  function renderPhase(phase: ChecklistPhase) {
+  const abnormalNote = abnormal.length > 0 && (
+    <div className={`abnormal-note ${unsent.length ? '' : 'sent'}`}>
+      <Icon name={unsent.length ? 'alert' : 'arrow'} size={14} />
+      <p>{unsent.length ? <>비정상 {unsent.length}건 · {unsent.map((entry) => entry.label).join(', ')}</> : <>비정상 {abnormal.length}건 SV에 전달 완료</>}</p>
+      {unsent.length > 0 && <button type="button" onClick={() => setComposing(true)}>이슈 작성 <Icon name="chevron" size={13} /></button>}
+    </div>
+  )
+
+  function renderScreen(key: ChecklistPhaseKey) {
+    const checks = itemsOf(key).filter((item) => item.input === '완료 체크')
+    const sections = [...new Set(checks.map((item) => item.section))]
+    const total = itemsOf(key).length
+    const done = doneCount(key)
     return (
-      <div key={phase.key} className="daily-phase">
-        {phase.measures.length > 0 && (
-          <div className="measure-list">
-            <h3>측정값 입력</h3>
-            {phase.measures.map((item) => {
-              const status = judgeMeasure(item, values[item.id] ?? '')
-              return (
-                <label key={item.id} className={`measure-row ${status ?? 'unset'}`}>
-                  <span><b>{item.label}</b><small>기준 {item.standard} · {item.time}</small></span>
-                  <span className="measure-input">
-                    <input aria-label={item.label} inputMode="decimal" disabled={live.busy || savingItems.has(item.id)} value={values[item.id] ?? ''} placeholder="입력" onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: event.target.value }))} onBlur={() => void saveMeasurement(item)} />
-                    <em>{item.unit}</em>
-                  </span>
-                  <i className="measure-state">{measureLabel(item,values[item.id] ?? '')}</i>
-                </label>
-              )
-            })}
-          </div>
-        )}
-        <div className="group-list">
-          <h3>점검 항목</h3>
-          {phase.groups.map((group) => (
-            <div key={group.id} className={`group-row ${group.status ?? 'unset'}`}>
-              <span><b>{group.label}</b><small>{group.tasks.join(' · ')}</small></span>
-              <StatusToggle label={group.label} status={group.status} disabled={live.busy} onChange={(status) => setStatus(group, status)} />
+      <div className="checklist-screen" role="dialog" aria-label={`${key === 'open' ? '오픈' : '마감'} 체크리스트`}>
+        <header className="checklist-screen-header">
+          <button type="button" onClick={() => setScreen(null)} aria-label="뒤로"><Icon name="chevron" size={20} /></button>
+          <div><h2>{key === 'open' ? '오픈' : '마감'} 체크리스트</h2><p>{done} / {total} 완료</p></div>
+          <b>{Math.round(done / total * 100)}%</b>
+        </header>
+        <div className="checklist-screen-body">
+          <div className="check-progress"><i style={{ width: `${done / total * 100}%` }} /></div>
+          {abnormalNote}
+          {key === 'open' && (
+            <div className="measure-list">
+              <h3>측정값 입력 · {measures[0]?.section} <small>{times.get(measures[0]?.id ?? '')} · 입력하면 기준에 따라 자동 판정</small></h3>
+              {measures.map((item) => {
+                const status = judgeManagerMeasure(item,values[item.id] ?? '')
+                return (
+                  <div key={item.id} className={`measure-row ${status ?? 'unset'}`}>
+                    <span><b>{item.task}</b><small>기준 {item.standard}</small></span>
+                    <label className="measure-input">
+                      <input inputMode="decimal" aria-label={`${item.task} 온도`} value={values[item.id] ?? ''} placeholder="입력" disabled={live.busy || savingItems.has(item.id)} onChange={(event) => measure(item, event.target.value)} onBlur={() => void saveMeasurement(item)} />
+                      <em>℃</em>
+                    </label>
+                    <StatusIndicator status={status} />
+                  </div>
+                )
+              })}
             </div>
-          ))}
+          )}
+          <div className="daily-phase">
+            {sections.map((section) => (
+              <div key={section} className="group-list">
+                <h3>{section}</h3>
+                {checks.filter((item) => item.section === section).map((item) => {
+                  const important = item.task.startsWith('(중요)') || item.task.startsWith('**')
+                  return (
+                    <div key={item.id} className={`group-row ${statuses[item.id] ?? 'unset'}`}>
+                      <span>{times.get(item.id) && <i className="task-time">{times.get(item.id)}</i>}<b className={important ? 'important' : ''}>{item.task.replace(/^\*\*/, '')}</b></span>
+                      <StatusToggle label={item.task} disabled={live.busy} status={statuses[item.id] ?? null} onChange={(next) => setStatus(item, next)} />
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+          {isComplete(key) && (key === 'open'
+            ? <button type="button" className="phase-complete" onClick={() => setScreen('close')}><Icon name="approve" size={15} /> 오픈 체크 완료 · 마감 체크리스트로 이동 <Icon name="chevron" size={14} /></button>
+            : <button type="button" className="phase-complete" onClick={() => setScreen(null)}><Icon name="approve" size={15} /> 오늘 마감 체크를 모두 완료했어요 · 돌아가기</button>)}
         </div>
       </div>
     )
   }
 
+  const allTotal = managerChecklist.length
+  const allDone = doneCount('open') + doneCount('close')
+
   return (
     <article className="simple-panel checklist-panel daily-checklist">
-      <div className="simple-panel-title"><div><span className="panel-title-icon blue"><Icon name="check" size={18} /></span><div><h2>{current.label} 체크리스트</h2><p>{done} / {total} 완료{openDone ? ' · 오픈 완료' : ' · 오픈을 마치면 마감 항목이 열려요'}</p></div></div><b>{Math.round(done / total * 100)}%</b></div>
-      <div className="check-progress"><i style={{ width: `${done / total * 100}%` }} /></div>
-      {abnormal.length > 0 && <p className="abnormal-note"><Icon name="alert" size={14} /> 비정상 {abnormal.length}건 · {abnormal.join(', ')}</p>}
-      <div className="phase-steps">
-        {phases.map((phase) => <span key={phase.key} className={phase.key === current.key ? 'active' : phase.key === 'open' && openDone ? 'done' : ''}>{phase.key === 'open' && openDone && <Icon name="arrow" size={12} />}{phase.label}</span>)}
+      <div className="simple-panel-title"><div><span className="panel-title-icon blue"><Icon name="check" size={18} /></span><div><h2>관리자 일일 체크리스트</h2><p>오늘 {allDone} / {allTotal} 완료</p></div></div><b>{Math.round(allDone / allTotal * 100)}%</b></div>
+      <div className="check-progress"><i style={{ width: `${allDone / allTotal * 100}%` }} /></div>
+      {abnormalNote}
+      <div className="phase-entry">
+        {(['open', 'close'] as const).map((key) => (
+          <button key={key} type="button" className={`${key} ${isComplete(key) ? 'complete' : ''}`} onClick={() => setScreen(key)}>
+            <span className="phase-entry-icon"><Icon name={isComplete(key) ? 'approve' : key === 'open' ? 'store' : 'clock'} size={20} /></span>
+            <span className="phase-entry-copy"><b>{key === 'open' ? '오픈' : '마감'}</b><small>{key === 'open' ? '심부 온도 측정 포함' : '중간 마감 포함'}</small></span>
+            <span className="phase-entry-count"><strong>{doneCount(key)}<small>/{itemsOf(key).length}</small></strong><i><b style={{ width: `${doneCount(key) / itemsOf(key).length * 100}%` }} /></i></span>
+            <Icon name="chevron" size={16} />
+          </button>
+        ))}
       </div>
-      {openDone ? (
-        <>
-          <button type="button" className="phase-collapse" onClick={() => setShowOpen(!showOpen)}>오픈 체크 완료 · {showOpen ? '접기' : '다시 보기'} <Icon name="chevron" size={14} /></button>
-          {showOpen && renderPhase(openPhase)}
-          {renderPhase(phases[1])}
-        </>
-      ) : renderPhase(openPhase)}
-      {visible.length > 1 && isPhaseDone(phases[1]) && <p className="phase-complete"><Icon name="approve" size={15} /> 오늘 체크리스트를 모두 완료했어요</p>}
+      {screen && renderScreen(screen)}
+      {composing && <ChecklistIssueModal entries={unsent} onClose={() => setComposing(false)} onSend={sendIssue} />}
     </article>
   )
 }
@@ -493,7 +587,7 @@ function DailyChecklist({ onToast }: { onToast: (message: string) => void }) {
 function ManagementPage({ onToast, costs }: { onToast: (message: string) => void; costs: CostItem[] }) {
   const live = useLive()
   const {data} = live
-  const checklist = dayChecks(data)
+  const checklist = managerRows(data)
   const checks = checklist.map(item => item.done)
   const [month, setMonth] = useState(data.date.slice(0,7))
   useEffect(() => setMonth(data.date.slice(0,7)), [data.date])
@@ -504,6 +598,45 @@ function ManagementPage({ onToast, costs }: { onToast: (message: string) => void
   const calendarDays = Array.from({length:42},(_,i) => {const date=addDays(start,i);const task=data.actions.find(a => a.due_date === date && a.store_id === data.session.storeId);return {date,day:Number(date.slice(-2)),muted:!date.startsWith(month),today:date===data.date,event:task?.title,tone:'red'}})
   function shiftMonth(delta: number) {const next=new Date(`${month}-01T12:00:00Z`);next.setUTCMonth(next.getUTCMonth()+delta);if(next.getUTCFullYear()>0 && next.getUTCFullYear()<10000)setMonth(next.toISOString().slice(0,7))}
 
+  return (
+    <section className="management-page">
+      <div className="subpage-heading">
+        <div><p>{storeName(data,data.session.storeId)} 운영</p><h1>매장 관리</h1><span>오늘의 업무와 일정을 한 번에 확인하세요.</span></div>
+        <button onClick={() => live.open({type:'date'})}><Icon name="calendar" size={17} /> {data.date}</button>
+      </div>
+
+      <div className="management-checklist-full">
+        <DailyChecklist key={`${data.session.storeId}:${data.date}`} onToast={onToast} />
+      </div>
+
+      <article className="simple-panel calendar-panel">
+        <div className="calendar-heading"><div><h2>{monthNumber}월 일정</h2><p>날짜를 선택해 운영 기록을 확인하세요.</p></div><div><button aria-label="이전 달" onClick={() => shiftMonth(-1)}><Icon name="chevron" size={16} /></button><b>{monthLabel}</b><button aria-label="다음 달" onClick={() => shiftMonth(1)}><Icon name="chevron" size={16} /></button></div></div>
+        <div className="calendar-layout">
+          <div className="calendar">
+            <div className="weekdays">{['일', '월', '화', '수', '목', '금', '토'].map((day) => <b key={day}>{day}</b>)}</div>
+            <div className="calendar-grid">
+              {calendarDays.map((item, index) => (
+                <button key={item.date} aria-label={item.date} aria-pressed={item.today} onClick={() => live.setDate(item.date)} className={`${item.muted ? 'muted' : ''} ${item.today ? 'today' : ''}`}>
+                  <span>{item.day}</span>
+                  {item.event && <small className={item.tone}>{item.event}</small>}
+                </button>
+              ))}
+            </div>
+          </div>
+          <aside className="schedule-list">
+            <div className="schedule-date"><b>{Number(data.date.slice(-2))}</b><span>{dayLabel(data.date).split('년 ')[1]}<small>점검 {checks.filter(Boolean).length}/{checks.length} 완료</small></span></div>
+            {['오픈','중간','마감'].map(block => {const group=checklist.filter(c => c.time_block.includes(block));return <div className="schedule-item" key={block}><i/><span><small>{group[0]?.fixed_time || '시간 미정'} · 체크</small><b>{block} 운영 체크</b><p>{group.filter(c => c.done).length}/{group.length}개 완료</p></span></div>})}
+            <button className="add-schedule" onClick={() => live.open({type:'order'})}>+ 발주 작성</button>
+          </aside>
+        </div>
+      </article>
+    </section>
+  )
+}
+
+function CostPanel({costs,onToast}: {costs:CostItem[];onToast:(message:string)=>void}) {
+  const live=useLive()
+  const {data}=live
   const [costType, setCostType] = useState('발주비')
   const [costAmount, setCostAmount] = useState('')
   const [costMemo, setCostMemo] = useState('')
@@ -523,17 +656,7 @@ function ManagementPage({ onToast, costs }: { onToast: (message: string) => void
   const monthlyCost = costs.reduce((total,item) => total+item.amount,0)
 
   return (
-    <section className="management-page">
-      <div className="subpage-heading">
-        <div><p>{storeName(data,data.session.storeId)} 운영</p><h1>매장 관리</h1><span>오늘의 업무와 일정을 한 번에 확인하세요.</span></div>
-        <button onClick={() => live.open({type:'date'})}><Icon name="calendar" size={17} /> {data.date}</button>
-      </div>
-
-      <div className="management-checklist-full">
-        <DailyChecklist key={`${data.session.storeId}:${data.date}`} onToast={onToast} />
-      </div>
-
-      <article className="simple-panel cost-panel">
+<article className="simple-panel cost-panel">
         <div className="cost-heading">
           <div><span className="panel-title-icon amber"><Icon name="package" size={18} /></span><div><h2>비용 관리</h2><p>발주와 매장 운영에 사용한 비용을 기록하세요.</p></div></div>
           <div className="cost-total"><small>{Number(data.date.slice(5,7))}월 등록 비용</small><strong>{monthlyCost.toLocaleString()}원</strong><span>{costs.length}건 등록 · 예산 미설정</span></div>
@@ -564,29 +687,44 @@ function ManagementPage({ onToast, costs }: { onToast: (message: string) => void
           </div>
         </div>
       </article>
+  )
+}
 
-      <article className="simple-panel calendar-panel">
-        <div className="calendar-heading"><div><h2>{monthNumber}월 일정</h2><p>날짜를 선택해 운영 기록을 확인하세요.</p></div><div><button aria-label="이전 달" onClick={() => shiftMonth(-1)}><Icon name="chevron" size={16} /></button><b>{monthLabel}</b><button aria-label="다음 달" onClick={() => shiftMonth(1)}><Icon name="chevron" size={16} /></button></div></div>
-        <div className="calendar-layout">
-          <div className="calendar">
-            <div className="weekdays">{['일', '월', '화', '수', '목', '금', '토'].map((day) => <b key={day}>{day}</b>)}</div>
-            <div className="calendar-grid">
-              {calendarDays.map((item, index) => (
-                <button key={item.date} aria-label={item.date} aria-pressed={item.today} onClick={() => live.setDate(item.date)} className={`${item.muted ? 'muted' : ''} ${item.today ? 'today' : ''}`}>
-                  <span>{item.day}</span>
-                  {item.event && <small className={item.tone}>{item.event}</small>}
-                </button>
-              ))}
-            </div>
-          </div>
-          <aside className="schedule-list">
-            <div className="schedule-date"><b>{Number(data.date.slice(-2))}</b><span>{dayLabel(data.date).split('년 ')[1]}<small>점검 {checks.filter(Boolean).length}/{checks.length} 완료</small></span></div>
-            {['오픈','중간','마감'].map(block => {const group=checklist.filter(c => c.time_block.includes(block));return <div className="schedule-item" key={block}><i/><span><small>{group[0]?.fixed_time || '시간 미정'} · 체크</small><b>{block} 운영 체크</b><p>{group.filter(c => c.done).length}/{group.length}개 완료</p></span></div>})}
-            <button className="add-schedule" onClick={() => live.open({type:'order'})}>+ 발주 작성</button>
-          </aside>
-        </div>
+type SentItem = { id: string; title: string; sentAt: string; summary: string; urgency?: IssueItem['urgency'] }
+
+function SentHistoryItem({ item, badge, onSave, onDelete }: { item: SentItem; badge: ReactNode; onSave: (patch: Partial<SentItem>) => Promise<boolean>; onDelete: () => Promise<boolean> }) {
+  const [mode, setMode] = useState<'view' | 'edit' | 'delete'>('view')
+  const [title, setTitle] = useState(item.title)
+  const [summary, setSummary] = useState(item.summary)
+  const [urgency, setUrgency] = useState(item.urgency)
+
+  function startEdit() {
+    setTitle(item.title)
+    setSummary(item.summary)
+    setUrgency(item.urgency)
+    setMode('edit')
+  }
+
+  if (mode === 'edit') {
+    return (
+      <article className="editing">
+        <label><span>제목</span><input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+        <label><span>내용</span><textarea rows={4} value={summary} onChange={(event) => setSummary(event.target.value)} /></label>
+        {urgency && <div className="history-urgency">{(['일반', '긴급'] as const).map((level) => <button key={level} type="button" className={urgency === level ? 'active' : ''} onClick={() => setUrgency(level)}>{level}</button>)}</div>}
+        <div className="history-actions"><button onClick={() => setMode('view')}>취소</button><button className="primary" disabled={!title.trim()} onClick={async () => {if(await onSave({ title:title.trim(),summary:summary.trim(),urgency }))setMode('view')}}>저장</button></div>
       </article>
-    </section>
+    )
+  }
+
+  return (
+    <article>
+      <div><b>{item.title}</b>{badge}</div>
+      <small>{item.sentAt}</small>
+      <p>{item.summary}</p>
+      {mode === 'delete'
+        ? <div className="history-actions confirm"><span>삭제하면 SV 화면에서도 사라져요.</span><button onClick={() => setMode('view')}>취소</button><button className="danger" onClick={() => void onDelete()}>삭제</button></div>
+        : <div className="history-actions"><button onClick={startEdit}>수정</button><button onClick={() => setMode('delete')}>삭제</button></div>}
+    </article>
   )
 }
 
@@ -601,6 +739,9 @@ function ReportPage({ costs, onToast }: { costs: CostItem[]; onToast: (message: 
   const [category,setCategory] = useState('장비')
   const [urgency,setUrgency] = useState('긴급')
   const [compose, setCompose] = useState<'report' | 'issue' | null>(null)
+  const [history,setHistory]=useState<'report'|'issue'|null>(null)
+  const myReports=data.reports.filter(r=>!r.read_only && r.store_id===data.session.storeId).map(r=>({id:r.id,title:r.title,summary:r.summary,sentAt:r.business_date,unread:!r.reply}))
+  const myIssues=data.issues.filter(i=>i.kind==='manual' && i.store_id===data.session.storeId).map(i=>({id:i.id,title:i.title,summary:i.description,sentAt:i.business_date,urgency:i.severity==='critical'?'긴급' as const:'일반' as const}))
   const [reportTitle, setReportTitle] = useState(`${data.date} ${storeName(data,data.session.storeId)} 주간 운영 보고`)
   const [reportMemo, setReportMemo] = useState(`이번 주 매출 ${money(metric.sales)}, 폐기액 ${money(metric.waste)}, 업무 이행률 ${metric.taskRate.toFixed(1)}%입니다.`)
   const [issueTitle, setIssueTitle] = useState('')
@@ -633,8 +774,8 @@ function ReportPage({ costs, onToast }: { costs: CostItem[]; onToast: (message: 
     <section className="management-page report-page">
       <div className="subpage-heading"><div><p>{storeName(data,data.session.storeId)} 운영 데이터</p><h1>보고</h1><span>매출과 비용, 고객 리뷰를 확인하고 필요한 내용을 SV에게 전달하세요.</span></div></div>
       <div className="compose-options">
-        <button onClick={() => setCompose('report')}><span className="compose-icon report"><Icon name="report" size={20} /></span><div><b>주간 보고서 작성</b><p>한 주의 매출·비용·리뷰를 정리해서 보내요.</p></div><strong>작성하기 <Icon name="chevron" size={15} /></strong></button>
-        <button onClick={() => setCompose('issue')}><span className="compose-icon issue"><Icon name="alert" size={20} /></span><div><b>운영 이슈 작성</b><p>긴급하거나 도움이 필요한 문제를 바로 전달해요.</p></div><strong>작성하기 <Icon name="chevron" size={15} /></strong></button>
+        <article><span className="compose-icon report"><Icon name="report" size={20} /></span><div><b>주간 보고서 작성</b><p>한 주의 매출·비용·리뷰를 정리해서 보내요.</p></div><span className="compose-actions"><button className="primary" onClick={() => setCompose('report')}>작성하기 <Icon name="chevron" size={14} /></button><button onClick={() => setHistory('report')}>내 보고서 보기 <em>{myReports.length}</em></button></span></article>
+        <article><span className="compose-icon issue"><Icon name="alert" size={20} /></span><div><b>운영 이슈 작성</b><p>긴급하거나 도움이 필요한 문제를 바로 전달해요.</p></div><span className="compose-actions"><button className="primary" onClick={() => setCompose('issue')}>작성하기 <Icon name="chevron" size={14} /></button><button onClick={() => setHistory('issue')}>내 이슈 보기 <em>{myIssues.length}</em></button></span></article>
       </div>
       <div className="report-overview-grid">
         <article className="simple-panel sales-panel report-sales-panel">
@@ -653,6 +794,7 @@ function ReportPage({ costs, onToast }: { costs: CostItem[]; onToast: (message: 
           <div className="cost-ai-note"><Icon name="sparkle" size={14} /><p><b>AI 비용 분석</b><span>AI 비용 분석은 준비 중입니다.</span></p></div>
         </article>
       </div>
+      <CostPanel costs={costs} onToast={onToast} />
       <div className="report-review-heading"><div><h2>리뷰 확인</h2><p>최근 7일 고객 반응과 AI 요약</p></div><Badge tone="info">수집 준비 중</Badge></div>
       <article className="review-summary-card">
         <div className="review-summary-top"><span><Icon name="sparkle" size={18} /></span><div><Badge tone="info">AI 요약</Badge><h2>이번 주 리뷰 핵심</h2></div></div>
@@ -663,6 +805,23 @@ function ReportPage({ costs, onToast }: { costs: CostItem[]; onToast: (message: 
         <article><div><Avatar text="N" /><span><b>네이버 리뷰</b><small>수집 준비 중</small></span><strong>—</strong></div><p>등록된 리뷰가 없습니다.</p><span><Icon name="sparkle" size={13} /> AI 분류 대기</span></article>
         <article><div><Avatar text="배" /><span><b>배달의민족 리뷰</b><small>수집 준비 중</small></span><strong>—</strong></div><p>등록된 리뷰가 없습니다.</p><span className="positive"><Icon name="sparkle" size={13} /> AI 분류 대기</span></article>
       </div>
+      {history && <div className="report-modal-backdrop" onClick={() => setHistory(null)}>
+        <div className="report-modal" onClick={(event) => event.stopPropagation()}>
+          <div className="report-modal-heading"><div><Badge tone={history === 'report' ? 'info' : 'critical'}>보낸 내역</Badge><h2>{history === 'report' ? '내가 쓴 주간 보고서' : '내가 쓴 운영 이슈'}</h2><p>SV에게 전달한 {history === 'report' ? '보고서' : '이슈'}를 최신순으로 보여줘요.</p></div><button onClick={() => setHistory(null)} aria-label="닫기"><Icon name="close" size={18} /></button></div>
+          <div className="my-history-list">
+            {(history === 'report' ? myReports : myIssues).length === 0 && <p className="my-history-empty">아직 보낸 {history === 'report' ? '보고서' : '이슈'}가 없어요.</p>}
+            {history === 'report'
+              ? myReports.map((report) => <SentHistoryItem key={report.id} item={report} badge={<Badge tone={report.unread ? 'neutral' : 'good'}>{report.unread ? 'SV 확인 전' : 'SV 확인함'}</Badge>}
+                  onSave={(patch) => live.run(()=>request(`/reports/${report.id}`,{method:'PATCH',body:{operation:'edit',title:patch.title,summary:patch.summary}}),'보고서를 수정했어요')}
+                  onDelete={() => live.run(()=>request(`/reports/${report.id}`,{method:'PATCH',body:{operation:'delete'}}),'보고서를 삭제했어요')} />)
+              : myIssues.map((issue) => <SentHistoryItem key={issue.id} item={issue} badge={<Badge tone={issue.urgency === '긴급' ? 'critical' : 'warning'}>{issue.urgency}</Badge>}
+                  onSave={(patch) => live.run(()=>request(`/actions/${issue.id}`,{method:'PATCH',body:{operation:'edit',title:patch.title,note:patch.summary,severity:patch.urgency==='긴급'?'critical':'warning'}}),'이슈를 수정했어요')}
+                  onDelete={() => live.run(()=>request(`/actions/${issue.id}`,{method:'PATCH',body:{operation:'delete'}}),'이슈를 삭제했어요')} />)}
+          </div>
+          <div className="report-modal-actions"><button onClick={() => setHistory(null)}>닫기</button><button onClick={() => { setCompose(history); setHistory(null) }}><Icon name="send" size={15} /> 새로 작성하기</button></div>
+        </div>
+      </div>}
+
       {compose === 'report' && <div className="report-modal-backdrop">
         <div className="report-modal">
           <div className="report-modal-heading"><div><Badge tone="info"><Icon name="sparkle" size={11} /> 운영 기록</Badge><h2>주간 보고서 작성</h2><p>운영 기록을 확인하고 요약을 작성해 주세요.</p></div><button onClick={() => setCompose(null)}><Icon name="close" size={18} /></button></div>
@@ -713,7 +872,7 @@ function ManagerApp({ onSwitch, costs }: { onSwitch: () => void; costs: CostItem
   const {data} = live
   const issues = data.issues.filter(i => i.store_id === data.session.storeId && activeIssue(i))
   const current = issues.find(i => i.kind === 'temperature') || issues[0]
-  const checks = dayChecks(data)
+  const checks = managerRows(data)
   const done = checks.filter(c => c.done).length
   const template = data.standards.find(t => t.item_id === current?.item_id)
   const store = data.stores.find(s => s.store_id === data.session.storeId)!
@@ -808,13 +967,13 @@ function ConnectedApp() {
   const costs: CostItem[] = data.costs.filter(row => row.business_date.startsWith(data.date.slice(0,7)) && (data.session.role === 'sv' || row.store_id === data.session.storeId)).map(row => ({type:row.category,memo:row.memo,amount:Number(row.amount),date:row.business_date,store_id:row.store_id}))
   const reports: ReportItem[] = data.reports.map(row => ({id:row.id,title:row.title,store:storeName(data,row.store_id),sentAt:new Date(row.created_at).toLocaleString('ko-KR'),summary:row.summary,unread:!row.read_only && !row.reply}))
   const managerIssues: IssueItem[] = data.issues.filter(issue => issue.kind === 'manual' && activeIssue(issue)).map(issue => ({id:issue.id,title:issue.title,store:storeName(data,issue.store_id),sentAt:issue.business_date,summary:issue.description,urgency:issue.severity === 'critical' ? '긴급' : '일반'}))
-  return <>
+  return <div className="mobile-frame"><div className="mobile-scroll">
     {data.session.role === 'sv'
       ? <Dashboard onSwitch={() => void live.switchSession('manager')} costs={costs} reports={reports} managerIssues={managerIssues} />
       : <ManagerApp onSwitch={() => void live.switchSession('sv')} costs={costs} />}
     <LiveDialogs />
     {live.message && <div className="toast" role="status">{live.message}</div>}
-  </>
+  </div></div>
 }
 
 

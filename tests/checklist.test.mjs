@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {checklistPhases,measureValues,judgeMeasure,measureLabel} from '../src/checklist.ts'
+import {checklistPhases,measureValues,judgeMeasure,measureLabel,managerStatuses,judgeManagerMeasure} from '../src/checklist.ts'
 
 test('upstream open/close UI partitions every actual task once, including mid-shift work',()=>{
   const data={standards:[{item_id:'cook',item:'패티',storage:'조리 완료',standard:'70℃ 이상',min_c:70,max_c:null,measure_time:'11:00'},{item_id:'cold',item:'양상추',storage:'냉장',standard:'0~5℃',min_c:0,max_c:5,measure_time:'15:00'}]}
@@ -21,4 +21,10 @@ test('checklist measurement labels retain warning and unrated distinctions',()=>
   assert.equal(measureLabel(ambient,'20'),'기록 완료')
   for(const value of ['','-','Infinity'])assert.equal(judgeMeasure(ambient,value),null)
   assert.equal(judgeMeasure({kind:'temperature',min_c:0,max_c:5},'0'),'ok')
+})
+test('T03 core temperatures retain 75 degrees independently of T04 cooking standards',()=>{
+  const item={standard:'75℃ 이상'}
+  assert.equal(judgeManagerMeasure(item,'74'),'bad');assert.equal(judgeManagerMeasure(item,'75'),'ok')
+  const data={date:'2026-08-12',session:{storeId:'S03'},managerTemplates:[{item_id:'T03-05',task:'입고 검수',section:'오픈',time:'',input:'완료 체크'}],managerStandards:[],managerRecords:[{store_id:'S03',item_id:'T03-05',done:'Y',pass:'Y'}],observations:[],checks:[{store_id:'S03',item_id:'T03-05',done:false,note:'bad'}]}
+  assert.equal(managerStatuses(data)['T03-05'],'bad')
 })

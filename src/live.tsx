@@ -87,8 +87,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     const store = current.session.storeId
     const key = `${store}:${current.date}:${item}`
     const existing = pending.current.get(key)
-    const saved = dayChecks(current).find(c => c.item_id === item)?.done ?? false
-    const savedNote = current.checks.find(c => c.store_id === store && c.item_id === item)?.note || ''
+    const previous = current.checks.find(c => c.store_id === store && c.item_id === item)
+    const source = [...current.tasks,...current.managerRecords].find(c => c.store_id === store && c.item_id === item)
+    const saved = previous ? previous.done : source?.done === 'Y'
+    const savedNote = previous?.note || (source?.done === 'Y' && source.pass === 'N' ? 'bad' : '')
     const entry = existing || {store, date:current.date, item, desired:done, saved, note:status || '', savedNote}
     entry.desired = done
     entry.note = status || ''

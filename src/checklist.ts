@@ -1,4 +1,5 @@
 import {acidResult, temperatureResult, type Row, type Snapshot} from './domain.ts'
+import {minimumOf,type ManagerCheckItem} from './lib/managerChecklist.ts'
 
 export type CheckStatus = 'ok' | 'bad' | null
 export type MeasureItem = {
@@ -51,4 +52,38 @@ export function measureLabel(item: MeasureItem, raw: string) {
   if(item.kind === 'temperature' && item.min_c === null && item.max_c === null) return '기록 완료'
   if(item.kind === 'acid' && acidResult(Number(raw)) === 'warning') return '주의'
   return judgeMeasure(item,raw) === 'bad' ? '기준 이탈' : '정상'
+}
+
+export function managerItems(data: Snapshot): ManagerCheckItem[] {
+  return data.managerTemplates.map(item => ({id:item.item_id,section:item.section,time:item.time || '',task:item.task,input:item.input,standard:item.standard || ''}))
+}
+export function managerValues(data: Snapshot): Record<string,string> {
+  const values: Record<string,string> = {}
+  for(const row of data.managerRecords.filter(row => row.store_id === data.session.storeId && row.done === 'Y')) {
+    if(row.value_c !== null && row.value_c !== undefined) values[row.item_id]=String(row.value_c)
+  }
+  const latest=new Set<string>()
+  for(const row of data.observations.filter(row => row.store_id === data.session.storeId && row.business_date === data.date && row.kind === 'temperature' && data.managerStandards.some(item => item.item_id === row.item_id))) {
+    if(!latest.has(row.item_id)){values[row.item_id]=String(row.value);latest.add(row.item_id)}
+  }
+  return values
+}
+export function judgeManagerMeasure(item: ManagerCheckItem, value: string): CheckStatus {
+  if(!value.trim() || !Number.isFinite(Number(value))) return null
+  const minimum=minimumOf(item)
+  return minimum !== null && Number(value)<minimum ? 'bad' : 'ok'
+}
+export function managerStatuses(data: Snapshot): Record<string,CheckStatus> {
+  const values=managerValues(data)
+  return Object.fromEntries(managerItems(data).map(item => {
+    if(item.input === '온도(℃)') return [item.id,judgeManagerMeasure(item,values[item.id] || '')]
+    const override=data.checks.find(row => row.store_id === data.session.storeId && row.item_id === item.id)
+    const source=data.managerRecords.find(row => row.store_id === data.session.storeId && row.item_id === item.id)
+    return [item.id,override ? override.note === 'bad' ? 'bad' : override.done ? 'ok' : null : source?.done === 'Y' ? source.pass === 'N' ? 'bad' : 'ok' : null]
+  }))
+}
+
+export function managerRows(data: Snapshot) {
+  const statuses=managerStatuses(data)
+  return managerItems(data).map(item=>({...item,item_id:item.id,time_block:item.section,fixed_time:item.time,done:statuses[item.id]!==null,status:statuses[item.id]}))
 }
