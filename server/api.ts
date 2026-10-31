@@ -797,6 +797,9 @@ export function runnApi(env: Record<string, string>): Plugin {
       }
       if (session.role !== "sv")
         throw new ApiError(403, "SV만 보고서에 답변할 수 있습니다.")
+      // 피드백 없이 확인만 표시합니다. 점장 앱에서 확인 알림으로 보여요.
+      if (p.operation === "confirm")
+        return db(`runn_reports?id=eq.${id}`, "PATCH", { reviewed_at: new Date().toISOString() })
       if (!text(p.reply))
         throw new ApiError(400, "검토 의견을 입력해 주세요.")
       return db(`runn_reports?id=eq.${id}`, "PATCH", {

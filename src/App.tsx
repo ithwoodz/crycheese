@@ -327,20 +327,29 @@ function SvReportCard({ report }: { report: Row }) {
   const live = useLive()
   const { data } = live
   const [reply, setReply] = useState(String(report.reply || ''))
-  const [editing, setEditing] = useState(!report.reply)
-  async function save() {
+  const [writing, setWriting] = useState(false)
+  const status = report.read_only ? '가져온 보고서' : report.reply ? '피드백 보냄' : report.reviewed_at ? '확인 완료' : '새 보고서'
+  async function confirm() {
+    await live.run(() => request(`/reports/${report.id}`, { method: 'PATCH', body: { operation: 'confirm' } }), '보고서를 확인 완료했어요')
+  }
+  async function sendFeedback() {
     const ok = await live.run(() => request(`/reports/${report.id}`, { method: 'PATCH', body: { reply: reply.trim() } }), '피드백을 보냈어요')
-    if (ok) setEditing(false)
+    if (ok) setWriting(false)
   }
   return (
     <article className="sv-report-card">
-      <div className="feedback-top"><span className="sv-report-store"><span className="report-store-mark">{storeName(data, report.store_id).slice(-1)}</span><b>{storeName(data, report.store_id)}</b></span><Badge tone={report.read_only ? 'neutral' : report.reply ? 'good' : 'info'}>{report.read_only ? '가져온 보고서' : report.reply ? '피드백 보냄' : '새 보고서'}</Badge></div>
+      <div className="feedback-top"><small>{new Date(report.created_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 제출</small><Badge tone={report.read_only ? 'neutral' : report.reply || report.reviewed_at ? 'good' : 'info'}>{status}</Badge></div>
       <h3>{report.title}</h3>
       <p>{report.summary}</p>
       <WeeklyReportBody figures={report.metrics || {}} weekly={weeklyForReport(data, report)} />
-      {!report.read_only && (editing
-        ? <div className="sv-reply-form"><span className="step-label">SV 피드백</span><textarea rows={3} value={reply} onChange={(event) => setReply(event.target.value)} placeholder="점장에게 보낼 피드백을 적어 주세요." /><div><button type="button" className="primary" disabled={live.busy || !reply.trim()} onClick={() => void save()}>피드백 보내기 <Icon name="send" size={13} /></button></div></div>
-        : <div className="feedback-reply"><span className="step-label">SV 피드백</span><p>{report.reply}</p><button type="button" onClick={() => setEditing(true)}>수정</button></div>)}
+      {report.reply && !writing && <div className="feedback-reply"><span className="step-label">SV 피드백</span><p>{report.reply}</p></div>}
+      {writing && <div className="sv-reply-form"><span className="step-label">SV 피드백</span><textarea rows={3} value={reply} onChange={(event) => setReply(event.target.value)} placeholder="점장에게 보낼 피드백을 적어 주세요." autoFocus /><div><button type="button" onClick={() => { setWriting(false); setReply(String(report.reply || '')) }}>취소</button><button type="button" className="primary" disabled={live.busy || !reply.trim()} onClick={() => void sendFeedback()}>피드백 보내기 <Icon name="send" size={13} /></button></div></div>}
+      {!report.read_only && !writing && (
+        <div className="sv-report-actions">
+          <button type="button" className={report.reviewed_at ? 'done' : 'confirm'} disabled={live.busy || !!report.reviewed_at} onClick={() => void confirm()}><Icon name="arrow" size={14} /> {report.reviewed_at ? '확인 완료됨' : '확인 완료'}</button>
+          <button type="button" className="feedback" disabled={live.busy} onClick={() => setWriting(true)}><Icon name="message" size={14} /> {report.reply ? '피드백 수정' : '피드백'}</button>
+        </div>
+      )}
     </article>
   )
 }
@@ -378,20 +387,22 @@ function SalesTrendCard() {
 function WeeklyReportView({ reports }: { reports: ReportItem[] }) {
   const live = useLive()
   const { data } = live
-  const [filter, setFilter] = useState<'new' | 'all'>('new')
   const rows = reports.map(item => data.reports.find(r => r.id === item.id)).filter(Boolean).sort((a, b) => String(b!.created_at).localeCompare(String(a!.created_at))) as Row[]
-  const fresh = rows.filter(r => !r.read_only && !r.reply)
-  const shown = filter === 'new' ? fresh : rows
+  const pendingOf = (storeId: string) => rows.filter(r => r.store_id === storeId && !r.read_only && !r.reviewed_at && !r.reply).length
+  const [storeId, setStoreId] = useState(() => String((data.stores.find(s => pendingOf(String(s.store_id))) || data.stores[0])?.store_id || ''))
+  const shown = rows.filter(r => r.store_id === storeId)
   return (
     <section className="weekly-report-view">
       <SalesTrendCard />
-      <div className="report-tabs" role="tablist">
-        <button type="button" role="tab" aria-selected={filter === 'new'} className={filter === 'new' ? 'active' : ''} onClick={() => setFilter('new')}>피드백 필요{fresh.length > 0 && <i>{fresh.length}</i>}</button>
-        <button type="button" role="tab" aria-selected={filter === 'all'} className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>전체 보고서</button>
+      <div className="store-report-picker" role="tablist" aria-label="매장 선택">
+        {data.stores.map(store => {
+          const id = String(store.store_id)
+          return <button key={id} type="button" role="tab" aria-selected={storeId === id} className={storeId === id ? 'active' : ''} onClick={() => setStoreId(id)}><b>{store.store_name}</b><small>보고서 {rows.filter(r => r.store_id === id).length}건</small>{pendingOf(id) > 0 && <i>{pendingOf(id)}</i>}</button>
+        })}
       </div>
       <div className="feedback-list">
         {shown.map(report => <SvReportCard key={report.id} report={report} />)}
-        {shown.length === 0 && <p className="my-history-empty">{filter === 'new' ? '피드백이 필요한 보고서가 없어요.' : '아직 받은 보고서가 없어요.'}</p>}
+        {shown.length === 0 && <p className="my-history-empty">{storeName(data, storeId)}에서 받은 주간 보고서가 없어요.</p>}
       </div>
     </section>
   )
@@ -409,7 +420,7 @@ function Dashboard({ onSwitch, costs, reports, managerIssues }: { onSwitch: () =
   const allSvNotices: Notice[] = [
     ...data.issues.filter(i => resultGroupOf(data, i) === 'need').map(i => ({ key: `new-${i.id}`, type: 'newIssue', icon: 'alert' as IconName, tone: 'red' as const, title: `${storeName(data, i.store_id)} 점장이 이슈를 보냈어요`, detail: i.title, at: String(i.action?.created_at || i.business_date), onOpen: () => openResults('need') })),
     ...data.events.filter(e => e.operation === 'request_verification').map(e => { const issue = data.issues.find(i => i.action?.id === e.action_id); return { key: `done-${e.id}`, type: 'done', icon: 'approve' as IconName, tone: 'green' as const, title: `${storeName(data, issue?.store_id || e.store_id)} 점장이 조치를 완료했어요`, detail: issue?.title || '조치 완료', at: String(e.created_at), onOpen: () => openResults('done') } }),
-    ...data.reports.filter(r => !r.read_only && !r.reply).map(r => ({ key: `report-${r.id}`, type: 'report', icon: 'report' as IconName, tone: 'blue' as const, title: `${storeName(data, r.store_id)} 주간 보고서가 도착했어요`, detail: r.title, at: String(r.created_at), onOpen: () => { setNoticeOpen(false); setActive('주간 보고서') } })),
+    ...data.reports.filter(r => !r.read_only && !r.reply && !r.reviewed_at).map(r => ({ key: `report-${r.id}`, type: 'report', icon: 'report' as IconName, tone: 'blue' as const, title: `${storeName(data, r.store_id)} 주간 보고서가 도착했어요`, detail: r.title, at: String(r.created_at), onOpen: () => { setNoticeOpen(false); setActive('주간 보고서') } })),
   ]
   const svNotices = allSvNotices.filter(n => svNotify[n.type] !== false)
   const resultCounts = Object.fromEntries(resultGroups.map(g => [g.key, data.issues.filter(i => resultGroupOf(data, i) === g.key).length])) as Record<ResultGroup, number>
@@ -433,8 +444,8 @@ function Dashboard({ onSwitch, costs, reports, managerIssues }: { onSwitch: () =
           {active === 'MY PAGE' ? <SvMyPage onSwitch={onSwitch} onNotifySettings={() => setSvNotifyOpen(true)} /> : <>
           {active !== '매장 관리' && <section className="manager-welcome">
             <p>{dayLabel(data.date)} · 담당 {data.stores.length}개 매장</p>
-            <h1>{active === '현황' ? '안녕하세요, SV님' : active}</h1>
-            <span>{active === '현황' ? '확인이 필요한 이슈부터 살펴보세요.' : `${data.stores.length}개 매장의 운영 데이터를 한눈에 확인하세요.`}</span>
+            <h1>{active === '현황' ? '안녕하세요, SV님' : active === '주간 보고서' ? '매장별 주간 보고서' : active}</h1>
+            <span>{active === '현황' ? '확인이 필요한 이슈부터 살펴보세요.' : active === '주간 보고서' ? '매장을 선택하면 그 매장의 주간 보고서를 볼 수 있어요.' : `${data.stores.length}개 매장의 운영 데이터를 한눈에 확인하세요.`}</span>
             <button className="date-chip" onClick={() => live.open({type:'date'})}><Icon name="calendar" size={15} /> {data.date} <Icon name="chevron" size={13} /></button>
           </section>}
 
@@ -500,7 +511,8 @@ const noticeTime = (at: string) => at.length > 10 ? new Date(at).toLocaleString(
 
 const managerNoticeTypes = [
   { key: 'request', label: 'SV 조치 요청', detail: 'SV가 조치나 보완을 요청하면 알려줘요' },
-  { key: 'reply', label: '보고서 피드백', detail: 'SV가 주간 보고서에 답변하면 알려줘요' },
+  { key: 'confirm', label: '보고서 확인', detail: 'SV가 주간 보고서를 확인하면 알려줘요' },
+  { key: 'reply', label: '보고서 피드백', detail: 'SV가 주간 보고서에 피드백을 남기면 알려줘요' },
   { key: 'urgent', label: '긴급 이슈', detail: '매장에 긴급 이슈가 생기면 알려줘요' },
 ]
 const svNoticeTypes = [
@@ -1229,7 +1241,7 @@ function ReportPage({ costs, onToast, tab, setTab, ackedReplies, onAck, inventor
   const [urgency,setUrgency] = useState('긴급')
   const [compose, setCompose] = useState<'report' | 'issue' | null>(null)
   const [history,setHistory]=useState<'report'|'issue'|null>(null)
-  const myReports=data.reports.filter(r=>!r.read_only && r.store_id===data.session.storeId).map(r=>({id:r.id,title:r.title,summary:r.summary,sentAt:r.business_date,unread:!r.reply}))
+  const myReports=data.reports.filter(r=>!r.read_only && r.store_id===data.session.storeId).map(r=>({id:r.id,title:r.title,summary:r.summary,sentAt:r.business_date,unread:!r.reply && !r.reviewed_at}))
   const myIssues=data.issues.filter(i=>i.kind==='manual' && i.store_id===data.session.storeId).map(i=>({id:i.id,title:i.title,summary:i.description,sentAt:i.business_date,urgency:i.severity==='critical'?'긴급' as const:'일반' as const}))
   const [reportTitle, setReportTitle] = useState(`${data.weekStart} ${storeName(data,data.session.storeId)} 주간 운영 보고`)
   const [reportMemo, setReportMemo] = useState('')
@@ -1384,13 +1396,16 @@ function ManagerApp({ onSwitch, costs }: { onSwitch: () => void; costs: CostItem
   const replies = data.reports.filter(r => !r.read_only && r.store_id === data.session.storeId && r.reply && !ackedReplies.includes(`${r.id}:${r.reply}`))
   const otherIssues = issues.filter(i => !requests.some(item => item.issue.id === i.id))
   const pendingCount = requests.length + replies.length
+  // SV가 피드백 없이 확인만 한 보고서(알림을 열면 확인한 것으로 처리)
+  const confirmed = data.reports.filter(r => !r.read_only && r.store_id === data.session.storeId && r.reviewed_at && !r.reply && !ackedReplies.includes(`${r.id}:confirmed`))
   const [noticeOpen, setNoticeOpen] = useState(false)
   const goHome = () => { setNoticeOpen(false); setActive('홈') }
   const [managerNotify, setManagerNotify] = useStoredState<Record<string, boolean>>('runn-notify-manager-v1', {})
   const [notifyOpen, setNotifyOpen] = useState(false)
   const allManagerNotices: Notice[] = [
     ...requests.map(({ issue, event }) => ({ key: `req-${event!.id}`, type: 'request', icon: 'send' as IconName, tone: 'red' as const, title: event!.operation === 'reject' ? 'SV가 보완을 요청했어요' : 'SV가 조치를 요청했어요', detail: event!.note || issue.title, at: String(event!.created_at), onOpen: goHome })),
-    ...replies.map(report => ({ key: `reply-${report.id}`, type: 'reply', icon: 'report' as IconName, tone: 'blue' as const, title: 'SV가 보고서에 답변했어요', detail: report.reply, at: String(report.updated_at || report.created_at), onOpen: () => { setNoticeOpen(false); openFeedback() } })),
+    ...confirmed.map(report => ({ key: `confirm-${report.id}`, type: 'confirm', icon: 'approve' as IconName, tone: 'green' as const, title: 'SV가 보고서를 확인했어요', detail: String(report.title), at: String(report.reviewed_at), onOpen: () => { setAckedReplies(current => [...current, `${report.id}:confirmed`]); setNoticeOpen(false); openFeedback() } })),
+    ...replies.map(report => ({ key: `reply-${report.id}`, type: 'reply', icon: 'report' as IconName, tone: 'blue' as const, title: 'SV가 보고서에 피드백을 남겼어요', detail: report.reply, at: String(report.updated_at || report.created_at), onOpen: () => { setNoticeOpen(false); openFeedback() } })),
     ...issues.filter(i => i.severity === 'critical' && i.status === 'open').map(i => ({ key: `urgent-${i.id}`, type: 'urgent', icon: 'alert' as IconName, tone: 'amber' as const, title: '긴급 이슈가 있어요', detail: i.title, at: String(i.business_date), onOpen: () => { setNoticeOpen(false); live.open({ type: 'issue', issue: i }) } })),
   ]
   const managerNotices = allManagerNotices.filter(n => managerNotify[n.type] !== false)
