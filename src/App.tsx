@@ -75,16 +75,29 @@ function Avatar({ text, dark = false }: { text: string; dark?: boolean }) {
   return <span className={`avatar ${dark ? 'avatar-dark' : ''}`}>{text}</span>
 }
 
-const navItems: { icon: IconName; label: string }[] = [
-  { icon: 'home', label: '현황' },
-  { icon: 'board', label: '이슈 보드' },
-  { icon: 'store', label: '매장 관리' },
-  { icon: 'report', label: '주간 보고서' },
+const svNav: { key: string; icon: IconName; label: string }[] = [
+  { key: '현황', icon: 'home', label: '홈' },
+  { key: '이슈 보드', icon: 'board', label: '이슈' },
+  { key: '매장 관리', icon: 'store', label: '매장' },
+  { key: '주간 보고서', icon: 'report', label: '보고' },
+  { key: 'MY PAGE', icon: 'user', label: 'MY PAGE' },
 ]
 
 type CostItem = { type: string; memo: string; amount: number; date: string }
 type ReportItem = { id: number; title: string; store: string; sentAt: string; summary: string; unread: boolean }
 type IssueItem = { id: number; title: string; store: string; sentAt: string; summary: string; urgency: '일반' | '긴급' }
+type CommandItem = { id: number; source: '이슈' | '보고서'; refTitle: string; title: string; due: string; sentAt: string; done: boolean }
+type CommandTarget = { source: CommandItem['source']; refTitle: string; preset?: string }
+type ScheduleCategory = '발주' | '체크' | '마감' | '기타'
+type ScheduleItem = { id: number; day: number; time: string; title: string; category: ScheduleCategory; detail: string }
+type ChecklistState = {
+  values: Record<string, string>
+  setValues: Dispatch<SetStateAction<Record<string, string>>>
+  statuses: Record<string, CheckStatus>
+  setStatuses: Dispatch<SetStateAction<Record<string, CheckStatus>>>
+  sentKeys: string[]
+  setSentKeys: Dispatch<SetStateAction<string[]>>
+}
 
 const initialCosts: CostItem[] = [
   { type: '발주비', memo: 'B업체 식자재 정기 발주', amount: 486000, date: '오늘 14:20' },
@@ -96,6 +109,29 @@ const initialReports: ReportItem[] = [
   { id: 1, title: '8월 1주차 강남역점 주간 운영 보고', store: '강남역점', sentAt: '어제 18:42', summary: '매출은 전주 대비 9.8% 증가했으나 점심 대기 관련 리뷰가 4건 발생했습니다.', unread: true },
   { id: 2, title: '8월 1주차 선릉점 주간 운영 보고', store: '선릉점', sentAt: '8월 9일 17:30', summary: '업무 이행률 98%를 유지했고 폐기율은 0.5%로 안정적입니다.', unread: false },
 ]
+
+const initialCommands: CommandItem[] = [
+  { id: 1, source: '이슈', refTitle: '냉장고 2번 온도 이상', title: '도어 패킹과 냉각 팬을 먼저 점검하고, 수리 전까지 고위험 식재료는 1번 냉장고로 옮겨 주세요.', due: '15:00', sentAt: '오늘 11:05', done: false },
+]
+
+// 8월 달력의 "오늘"은 12일입니다.
+const todayDay = 12
+const scheduleTone: Record<ScheduleCategory, string> = { 발주: 'amber', 체크: 'blue', 마감: 'green', 기타: 'violet' }
+const initialSchedules: ScheduleItem[] = [
+  { id: 1, day: 2, time: '10:00', title: '재고 실사', category: '체크', detail: '' },
+  { id: 2, day: 4, time: '15:00', title: 'A업체 발주', category: '발주', detail: '' },
+  { id: 3, day: 10, time: '14:00', title: '주간 청소', category: '체크', detail: '' },
+  { id: 4, day: 12, time: '16:00', title: 'B업체 정기 발주 마감', category: '발주', detail: '추천 발주 8개 품목' },
+  { id: 5, day: 12, time: '18:00', title: '중간 운영 체크', category: '체크', detail: '온도·위생 4개 항목' },
+  { id: 6, day: 12, time: '22:30', title: '마감 정산', category: '마감', detail: '매출 및 폐기 기록' },
+  { id: 7, day: 14, time: '11:00', title: '유통기한 점검', category: '체크', detail: '' },
+  { id: 8, day: 19, time: '17:00', title: '주간 보고', category: '기타', detail: '' },
+  { id: 9, day: 25, time: '10:00', title: '재고 실사', category: '체크', detail: '' },
+]
+
+function sortSchedules(items: ScheduleItem[]) {
+  return [...items].sort((a, b) => a.day - b.day || a.time.localeCompare(b.time))
+}
 
 const initialIssues: IssueItem[] = [
   { id: 1, title: '냉장고 2번 온도 이상', store: '역삼점', sentAt: '오늘 10:42', summary: '재측정 후에도 7.2℃가 확인되어 장비 점검이 필요합니다.', urgency: '긴급' },
@@ -130,14 +166,20 @@ function StoreCard({ store, onOpen }: { store: StoreSummary; onOpen: () => void 
   )
 }
 
-function IssueBoardView({ managerIssues, issues }: { managerIssues: IssueItem[]; issues: Finding[] }) {
+function commandStatus(commands: CommandItem[], source: CommandItem['source'], refTitle: string) {
+  const related = commands.filter((command) => command.source === source && command.refTitle === refTitle)
+  if (!related.length) return null
+  return related.every((command) => command.done) ? <Badge tone="good">점장 조치 완료</Badge> : <Badge tone="info">조치 요청함</Badge>
+}
+
+function IssueBoardView({ managerIssues, issues, commands, onRequestCommand }: { managerIssues: IssueItem[]; issues: Finding[]; commands: CommandItem[]; onRequestCommand: (target: CommandTarget) => void }) {
   const [selected, setSelected] = useState(issues[0]?.title ?? '')
   return (
     <section className="issue-board-view">
       <div className="manager-submitted-section">
         <div className="submitted-heading"><div><h2>점장이 보낸 이슈</h2><p>매장에서 직접 해결하기 어려워 SV 확인을 요청한 항목입니다.</p></div><Badge tone="critical">{managerIssues.length}건 확인 필요</Badge></div>
         <div className="submitted-issue-list">
-          {managerIssues.map((issue) => <button key={issue.id}><span className="submitted-alert"><Icon name="alert" size={17} /></span><span><Badge tone={issue.urgency === '긴급' ? 'critical' : 'warning'}>{issue.urgency}</Badge><b>{issue.title}</b><small>{issue.store} 점장 · {issue.sentAt}</small><p>{issue.summary}</p></span><strong>상세 보기 <Icon name="chevron" size={15} /></strong></button>)}
+          {managerIssues.map((issue) => <article key={issue.id}><span className="submitted-alert"><Icon name="alert" size={17} /></span><span><span className="submitted-badges"><Badge tone={issue.urgency === '긴급' ? 'critical' : 'warning'}>{issue.urgency}</Badge>{commandStatus(commands, '이슈', issue.title)}</span><b>{issue.title}</b><small>{issue.store} 점장 · {issue.sentAt}</small><p>{issue.summary}</p></span><button type="button" className="command-button" onClick={() => onRequestCommand({ source: '이슈', refTitle: issue.title })}>조치 요청 <Icon name="send" size={13} /></button></article>)}
         </div>
       </div>
       <div className="status-overview">
@@ -161,7 +203,7 @@ function IssueBoardView({ managerIssues, issues }: { managerIssues: IssueItem[];
           </div>
           <div className="analysis-columns">
             <div><span className="analysis-icon cause"><Icon name="search" size={16} /></span><section><b>원인 분석</b><p>최근 7일간 온도가 지속 상승했습니다. 냉장고 문 열림 시간 증가와 점심 피크 시간대가 겹치며, 장비 자체 냉각 성능 저하 가능성도 높습니다.</p><div><span>문 열림 빈도 <b>+34%</b></span><span>피크 시간 이탈 <b>4회</b></span></div></section></div>
-            <div><span className="analysis-icon action"><Icon name="sparkle" size={16} /></span><section><b>AI 추천 조치</b><p>① 도어 패킹과 냉각 팬을 우선 점검하세요.<br />② 수리 전까지 고위험 식재료를 1번 냉장고로 이동하세요.</p><button>점장에게 조치 요청 <Icon name="send" size={14} /></button></section></div>
+            <div><span className="analysis-icon action"><Icon name="sparkle" size={16} /></span><section><b>AI 추천 조치</b><p>① 도어 패킹과 냉각 팬을 우선 점검하세요.<br />② 수리 전까지 고위험 식재료를 1번 냉장고로 이동하세요.</p><button onClick={() => onRequestCommand({ source: '이슈', refTitle: selected, preset: '도어 패킹과 냉각 팬을 우선 점검하고, 수리 전까지 고위험 식재료를 1번 냉장고로 옮겨 주세요.' })}>점장에게 조치 요청 <Icon name="send" size={14} /></button></section></div>
           </div>
         </article>
       </div>
@@ -230,14 +272,14 @@ function StoreManagementView({ costs, stores }: { costs: CostItem[]; stores: Sto
   )
 }
 
-function WeeklyReportView({ reports: sentReports, weeklyReports }: { reports: ReportItem[]; weeklyReports: WeeklyReport[] }) {
+function WeeklyReportView({ reports: sentReports, weeklyReports, commands, onRequestCommand }: { reports: ReportItem[]; weeklyReports: WeeklyReport[]; commands: CommandItem[]; onRequestCommand: (target: CommandTarget) => void }) {
   const reports = [...sentReports, ...weeklyReports]
   return (
     <section className="weekly-report-view">
       <div className="submitted-reports">
         <div className="submitted-heading"><div><h2>점장 제출 주간 보고서</h2><p>각 매장에서 보낸 최신 보고서를 확인하세요.</p></div><Badge tone="info">최근 {reports.length}건</Badge></div>
         <div className="submitted-report-grid">
-          {reports.map((report) => <article key={report.id}><div><span className="report-store-mark">{report.store.slice(0,1)}</span><p><b>{report.store}</b><small>{report.sentAt}</small></p><Badge tone={report.unread ? 'info' : 'neutral'}>{report.unread ? '새 보고서' : '확인함'}</Badge></div><h3>{report.title}</h3><p>{report.summary}</p><button>보고서 확인 <Icon name="chevron" size={14} /></button></article>)}
+          {reports.map((report) => <article key={report.id}><div><span className="report-store-mark">{report.store.slice(0,1)}</span><p><b>{report.store}</b><small>{report.sentAt}</small></p><Badge tone={report.unread ? 'info' : 'neutral'}>{report.unread ? '새 보고서' : '확인함'}</Badge></div><h3>{report.title}</h3><p>{report.summary}</p>{commandStatus(commands, '보고서', report.title)}<span className="report-card-actions"><button>보고서 확인 <Icon name="chevron" size={14} /></button><button className="command-button" onClick={() => onRequestCommand({ source: '보고서', refTitle: report.title })}>조치 요청 <Icon name="send" size={13} /></button></span></article>)}
         </div>
       </div>
       <div className="report-summary">
@@ -271,59 +313,52 @@ function WeeklyReportView({ reports: sentReports, weeklyReports }: { reports: Re
   )
 }
 
-function Dashboard({ onSwitch, costs, reports, managerIssues }: { onSwitch: () => void; costs: CostItem[]; reports: ReportItem[]; managerIssues: IssueItem[] }) {
+function CommandModal({ target, onClose, onSend }: { target: CommandTarget; onClose: () => void; onSend: (title: string, due: string) => void }) {
+  const [title, setTitle] = useState(target.preset ?? '')
+  const [due, setDue] = useState('')
+  return (
+    <div className="report-modal-backdrop">
+      <div className="report-modal">
+        <div className="report-modal-heading"><div><Badge tone="info">점장에게 조치 요청</Badge><h2>{target.refTitle}</h2><p>{target.source}에 대한 처리 요청이 점장 홈의 "지금 처리해 주세요"에 표시돼요.</p></div><button onClick={onClose} aria-label="닫기"><Icon name="close" size={18} /></button></div>
+        <div className="report-form">
+          <label><span>요청 내용</span><textarea rows={4} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="예: 냉장고 도어 패킹을 점검하고 30분 뒤 재측정해 주세요." /></label>
+          <label><span>처리 기한 (선택)</span><input type="time" value={due} onChange={(event) => setDue(event.target.value)} /></label>
+        </div>
+        <div className="report-modal-actions"><button onClick={onClose}>취소</button><button disabled={!title.trim()} onClick={() => onSend(title.trim(), due)}><Icon name="send" size={15} /> 점장에게 보내기</button></div>
+      </div>
+    </div>
+  )
+}
+
+function Dashboard({ onSwitch, costs, reports, managerIssues, commands, onSendCommand }: { onSwitch: () => void; costs: CostItem[]; reports: ReportItem[]; managerIssues: IssueItem[]; commands: CommandItem[]; onSendCommand: (command: CommandItem) => void }) {
+  const [commandTarget, setCommandTarget] = useState<CommandTarget | null>(null)
+  const [svToast, setSvToast] = useState('')
   const [active, setActive] = useState('현황')
   const [notice, setNotice] = useState(false)
   const data = useDashboardData()
-  const [menuOpen, setMenuOpen] = useState(false)
 
   return (
-    <div className="dashboard-shell">
-      {menuOpen && <div className="sidebar-backdrop" onClick={() => setMenuOpen(false)} />}
-      <aside className={menuOpen ? 'sidebar open' : 'sidebar'}>
-        <div className="brand">
-          <span className="brand-mark"><span /><span /><span /></span>
-          <span className="brand-copy"><b>RUNN</b><small>STORE OPS</small></span>
-        </div>
-        <nav className="side-nav" aria-label="SV 메뉴">
-          {navItems.map((item) => (
-            <button key={item.label} className={active === item.label ? 'active' : ''} onClick={() => { setActive(item.label); setMenuOpen(false) }}>
-              <Icon name={item.icon} size={19} />
-              <span>{item.label}</span>
-              {item.label === '이슈 보드' && <em>7</em>}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-footer">
-          <button onClick={onSwitch}><Icon name="users" size={18} /> 점장 화면 보기</button>
-          <div className="profile">
-            <Avatar text="김" dark />
-            <span><b>김수현 SV</b><small>강남 1지역 · 3개 매장</small></span>
-            <Icon name="more" />
-          </div>
-        </div>
-      </aside>
-
-      <main className="dashboard-main">
-        <header className="topbar">
-          <button className="mobile-menu" onClick={() => setMenuOpen(true)} aria-label="메뉴 열기" aria-expanded={menuOpen}><Icon name="menu" /></button>
-          <div className="search-box"><Icon name="search" size={18} /><input aria-label="검색" placeholder="매장, 이슈 검색" /></div>
-          <div className="top-actions">
-            <button className="role-pill" onClick={onSwitch}>점장 화면</button>
+    <div className="manager-bg">
+      <div className="manager-shell sv-shell">
+        <header className="manager-header">
+          <div className="manager-brand"><span className="brand-mark small"><span /><span /><span /></span><b>RUNN</b><em className="role-tag">SV</em></div>
+          <div className="manager-tools">
             <button className="icon-button" onClick={() => setNotice(!notice)} aria-label="알림"><Icon name="bell" size={20} /><i /></button>
             <Avatar text="김" />
           </div>
           {notice && <div className="notice-pop"><b>새 알림 2개</b><span>역삼점 냉장 온도 이슈가 전달되었습니다.</span></div>}
         </header>
 
-        <div className="dashboard-content">
-          <section className="page-heading">
-            <div><p>2026년 8월 12일 수요일</p><h1>{active === '현황' ? '안녕하세요, 김수현님' : active}</h1><span>{active === '현황' ? '확인이 필요한 이슈부터 살펴보세요.' : '3개 매장의 운영 데이터를 한눈에 확인하세요.'}</span></div>
-            <button className="date-button"><Icon name="calendar" size={17} /> 최근 7일 <Icon name="chevron" size={14} /></button>
+        <main className="manager-main">
+          {active === 'MY PAGE' ? <SvMyPage onSwitch={onSwitch} /> : <>
+          <section className="manager-welcome">
+            <p>8월 12일 수요일 · 강남 1지역</p>
+            <h1>{active === '현황' ? '안녕하세요, 김수현님' : active}</h1>
+            <span>{active === '현황' ? '확인이 필요한 이슈부터 살펴보세요.' : '3개 매장의 운영 데이터를 한눈에 확인하세요.'}</span>
           </section>
 
           {active === '현황' ? <><section className="metric-grid" aria-label="주요 현황">
-            <article className="metric-card metric-blue"><span className="metric-icon"><Icon name="send" /></span><div><small>전달받은 이슈</small><strong>3</strong><p><b>+1</b> 어제보다</p></div><button onClick={() => setActive('전달받은 이슈')}><Icon name="chevron" size={18} /></button></article>
+            <article className="metric-card metric-blue"><span className="metric-icon"><Icon name="send" /></span><div><small>전달받은 이슈</small><strong>3</strong><p><b>+1</b> 어제보다</p></div><button onClick={() => setActive('이슈 보드')}><Icon name="chevron" size={18} /></button></article>
             <article className="metric-card metric-violet"><span className="metric-icon"><Icon name="clock" /></span><div><small>확인 대기</small><strong>5</strong><p>오늘 <b>2건</b> 추가</p></div><button onClick={() => setActive('이슈 보드')}><Icon name="chevron" size={18} /></button></article>
             <article className="metric-card metric-red"><span className="metric-icon"><Icon name="alert" /></span><div><small>기한 초과</small><strong>2</strong><p><b>즉시 확인 필요</b></p></div><button onClick={() => setActive('이슈 보드')}><Icon name="chevron" size={18} /></button></article>
             <article className="metric-card metric-green"><span className="metric-icon"><Icon name="approve" /></span><div><small>이번 주 해결</small><strong>18</strong><p><b>+12%</b> 지난주보다</p></div><button><Icon name="chevron" size={18} /></button></article>
@@ -380,9 +415,26 @@ function Dashboard({ onSwitch, costs, reports, managerIssues }: { onSwitch: () =
             </aside>
           </section>
 
-          </> : active === '이슈 보드' ? <IssueBoardView managerIssues={managerIssues} issues={data.findings} /> : active === '매장 관리' ? <StoreManagementView costs={costs} stores={data.stores} /> : <WeeklyReportView reports={reports} weeklyReports={data.weeklyReports} />}
-        </div>
-      </main>
+          </> : active === '이슈 보드' ? <IssueBoardView managerIssues={managerIssues} issues={data.findings} commands={commands} onRequestCommand={setCommandTarget} /> : active === '매장 관리' ? <StoreManagementView costs={costs} stores={data.stores} /> : <WeeklyReportView reports={reports} weeklyReports={data.weeklyReports} commands={commands} onRequestCommand={setCommandTarget} />}
+          </>}
+        </main>
+
+        <nav className="bottom-nav" aria-label="SV 메뉴">
+          {svNav.map((item) => (
+            <button key={item.key} className={active === item.key ? 'active' : ''} onClick={() => setActive(item.key)}>
+              <span><Icon name={item.icon} size={21} />{item.key === '이슈 보드' && managerIssues.length > 0 && <i>{managerIssues.length}</i>}</span>
+              <small>{item.label}</small>
+            </button>
+          ))}
+        </nav>
+      {commandTarget && <CommandModal target={commandTarget} onClose={() => setCommandTarget(null)} onSend={(title, due) => {
+        onSendCommand({ id: Date.now(), source: commandTarget.source, refTitle: commandTarget.refTitle, title, due, sentAt: '방금 전', done: false })
+        setCommandTarget(null)
+        setSvToast('점장에게 조치 요청을 보냈어요')
+        window.setTimeout(() => setSvToast(''), 2200)
+      }} />}
+        {svToast && <div className="toast"><Icon name="arrow" size={15} /> {svToast}</div>}
+      </div>
     </div>
   )
 }
@@ -396,11 +448,11 @@ const managerNav: { icon: IconName; label: string }[] = [
 
 const calendarDays = [
   { day: 27, muted: true }, { day: 28, muted: true }, { day: 29, muted: true }, { day: 30, muted: true }, { day: 31, muted: true },
-  { day: 1 }, { day: 2, event: '재고 실사', tone: 'blue' },
-  { day: 3 }, { day: 4, event: 'A업체 발주', tone: 'amber' }, { day: 5 }, { day: 6 }, { day: 7 }, { day: 8 }, { day: 9 },
-  { day: 10, event: '주간 청소', tone: 'green' }, { day: 11 }, { day: 12, today: true, event: 'B업체 발주', tone: 'red' }, { day: 13 }, { day: 14, event: '유통기한', tone: 'amber' }, { day: 15 }, { day: 16 },
-  { day: 17 }, { day: 18 }, { day: 19, event: '주간 보고', tone: 'blue' }, { day: 20 }, { day: 21 }, { day: 22 }, { day: 23 },
-  { day: 24 }, { day: 25, event: '재고 실사', tone: 'green' }, { day: 26 }, { day: 27 }, { day: 28 }, { day: 29 }, { day: 30 },
+  { day: 1 }, { day: 2 },
+  { day: 3 }, { day: 4 }, { day: 5 }, { day: 6 }, { day: 7 }, { day: 8 }, { day: 9 },
+  { day: 10 }, { day: 11 }, { day: 12, today: true }, { day: 13 }, { day: 14 }, { day: 15 }, { day: 16 },
+  { day: 17 }, { day: 18 }, { day: 19 }, { day: 20 }, { day: 21 }, { day: 22 }, { day: 23 },
+  { day: 24 }, { day: 25 }, { day: 26 }, { day: 27 }, { day: 28 }, { day: 29 }, { day: 30 },
   { day: 31 }, { day: 1, muted: true }, { day: 2, muted: true }, { day: 3, muted: true }, { day: 4, muted: true }, { day: 5, muted: true }, { day: 6, muted: true },
 ]
 
@@ -471,12 +523,10 @@ function ChecklistIssueModal({ entries, onClose, onSend }: { entries: AbnormalEn
   )
 }
 
-function DailyChecklist({ onToast, onSendIssue }: { onToast: (message: string) => void; onSendIssue: (issue: IssueItem) => void }) {
+function DailyChecklist({ onToast, onSendIssue, checklist }: { onToast: (message: string) => void; onSendIssue: (issue: IssueItem) => void; checklist: ChecklistState }) {
+  const { values, setValues, statuses, setStatuses, sentKeys, setSentKeys } = checklist
   const [screen, setScreen] = useState<ChecklistPhaseKey | null>(null)
-  const [values, setValues] = useState<Record<string, string>>({})
-  const [statuses, setStatuses] = useState<Record<string, CheckStatus>>({})
   const [composing, setComposing] = useState(false)
-  const [sentKeys, setSentKeys] = useState<string[]>([])
 
   const times = displayTimes(managerChecklist)
   const measures = managerChecklist.filter((item) => item.input === '온도(℃)')
@@ -663,7 +713,32 @@ function CostPanel({ costs, setCosts, onToast }: { costs: CostItem[]; setCosts: 
   )
 }
 
-function ManagementPage({ onToast, onSendIssue }: { onToast: (message: string) => void; onSendIssue: (issue: IssueItem) => void }) {
+function ScheduleForm({ day, onCancel, onSave }: { day: number; onCancel: () => void; onSave: (item: Omit<ScheduleItem, 'id'>) => void }) {
+  const [title, setTitle] = useState('')
+  const [time, setTime] = useState('09:00')
+  const [category, setCategory] = useState<ScheduleCategory>('체크')
+  const [detail, setDetail] = useState('')
+  const [scheduleDay, setScheduleDay] = useState(day)
+  return (
+    <div className="schedule-form">
+      <label><span>일정 이름</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="예: C업체 발주" /></label>
+      <div className="schedule-form-row">
+        <label><span>날짜</span><select value={scheduleDay} onChange={(event) => setScheduleDay(Number(event.target.value))}>{Array.from({ length: 31 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>8월 {value}일</option>)}</select></label>
+        <label><span>시간</span><input type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label>
+      </div>
+      <div className="schedule-categories">{(['발주', '체크', '마감', '기타'] as const).map((value) => <button key={value} type="button" className={category === value ? `active ${scheduleTone[value]}` : ''} onClick={() => setCategory(value)}>{value}</button>)}</div>
+      <label><span>메모 (선택)</span><input value={detail} onChange={(event) => setDetail(event.target.value)} placeholder="예: 추천 발주 5개 품목" /></label>
+      <div className="schedule-form-actions"><button type="button" onClick={onCancel}>취소</button><button type="button" className="primary" disabled={!title.trim() || !time} onClick={() => onSave({ day: scheduleDay, time, title: title.trim(), category, detail: detail.trim() })}>일정 저장</button></div>
+    </div>
+  )
+}
+
+function ManagementPage({ onToast, onSendIssue, checklist, schedules, setSchedules }: { onToast: (message: string) => void; onSendIssue: (issue: IssueItem) => void; checklist: ChecklistState; schedules: ScheduleItem[]; setSchedules: Dispatch<SetStateAction<ScheduleItem[]>> }) {
+  const [selectedDay, setSelectedDay] = useState(todayDay)
+  const [adding, setAdding] = useState(false)
+  const daySchedules = sortSchedules(schedules.filter((item) => item.day === selectedDay))
+  const weekday = ['토', '일', '월', '화', '수', '목', '금'][selectedDay % 7]
+
   return (
     <section className="management-page">
       <div className="subpage-heading">
@@ -672,7 +747,7 @@ function ManagementPage({ onToast, onSendIssue }: { onToast: (message: string) =
       </div>
 
       <div className="management-checklist-full">
-        <DailyChecklist onToast={onToast} onSendIssue={onSendIssue} />
+        <DailyChecklist onToast={onToast} onSendIssue={onSendIssue} checklist={checklist} />
       </div>
 
       <article className="simple-panel calendar-panel">
@@ -681,20 +756,27 @@ function ManagementPage({ onToast, onSendIssue }: { onToast: (message: string) =
           <div className="calendar">
             <div className="weekdays">{['일', '월', '화', '수', '목', '금', '토'].map((day) => <b key={day}>{day}</b>)}</div>
             <div className="calendar-grid">
-              {calendarDays.map((item, index) => (
-                <button key={`${item.day}-${index}`} className={`${item.muted ? 'muted' : ''} ${item.today ? 'today' : ''}`}>
-                  <span>{item.day}</span>
-                  {item.event && <small className={item.tone}>{item.event}</small>}
-                </button>
-              ))}
+              {calendarDays.map((item, index) => {
+                const events = item.muted ? [] : sortSchedules(schedules.filter((schedule) => schedule.day === item.day))
+                return (
+                  <button key={`${item.day}-${index}`} className={`${item.muted ? 'muted' : ''} ${item.today ? 'today' : ''} ${!item.muted && item.day === selectedDay ? 'selected' : ''}`} disabled={item.muted} onClick={() => { setSelectedDay(item.day); setAdding(false) }}>
+                    <span>{item.day}</span>
+                    {events[0] && <small className={scheduleTone[events[0].category]}>{events[0].title}</small>}
+                    {events.length > 1 && <em className="more-events">+{events.length - 1}</em>}
+                  </button>
+                )
+              })}
             </div>
           </div>
           <aside className="schedule-list">
-            <div className="schedule-date"><b>12</b><span>8월 수요일<small>오늘 일정 3개</small></span></div>
-            <div className="schedule-item urgent"><i /><span><small>16:00 · 발주</small><b>B업체 정기 발주 마감</b><p>추천 발주 8개 품목</p></span><Badge tone="warning">발주 전</Badge></div>
-            <div className="schedule-item"><i /><span><small>18:00 · 체크</small><b>중간 운영 체크</b><p>온도·위생 4개 항목</p></span></div>
-            <div className="schedule-item green"><i /><span><small>22:30 · 마감</small><b>마감 정산</b><p>매출 및 폐기 기록</p></span></div>
-            <button className="add-schedule">+ 일정 추가</button>
+            <div className="schedule-date"><b>{selectedDay}</b><span>8월 {weekday}요일<small>{selectedDay === todayDay ? '오늘 ' : ''}일정 {daySchedules.length}개</small></span></div>
+            {daySchedules.length === 0 && <p className="schedule-empty">등록된 일정이 없어요.</p>}
+            {daySchedules.map((item) => (
+              <div key={item.id} className={`schedule-item ${scheduleTone[item.category]}`}><i /><span><small>{item.time} · {item.category}</small><b>{item.title}</b>{item.detail && <p>{item.detail}</p>}</span><button type="button" className="schedule-delete" aria-label={`${item.title} 삭제`} onClick={() => { setSchedules((current) => current.filter((schedule) => schedule.id !== item.id)); onToast('일정을 삭제했어요') }}><Icon name="close" size={13} /></button></div>
+            ))}
+            {adding
+              ? <ScheduleForm day={selectedDay} onCancel={() => setAdding(false)} onSave={(item) => { setSchedules((current) => [...current, { ...item, id: Date.now() }]); setSelectedDay(item.day); setAdding(false); onToast(`8월 ${item.day}일 ${item.time} 일정을 추가했어요`) }} />
+              : <button className="add-schedule" onClick={() => setAdding(true)}>+ 일정 추가</button>}
           </aside>
         </div>
       </article>
@@ -848,6 +930,20 @@ function ReportPage({ costs, setCosts, myReports, myIssues, setReports, setIssue
   )
 }
 
+function SvMyPage({ onSwitch }: { onSwitch: () => void }) {
+  return (
+    <section className="management-page">
+      <div className="subpage-heading"><div><p>계정 및 담당 매장</p><h1>MY PAGE</h1><span>내 정보와 담당 매장을 관리하세요.</span></div></div>
+      <article className="profile-card-large"><Avatar text="김" /><div><h2>김수현 SV</h2><p>강남 1지역 · 슈퍼바이저</p><span>강남역점 · 역삼점 · 선릉점</span></div><button>프로필 수정</button></article>
+      <div className="settings-list">
+        <button><span className="panel-title-icon blue"><Icon name="store" size={18} /></span><div><b>담당 매장</b><small>3개 매장 운영 정보</small></div><Icon name="chevron" size={17} /></button>
+        <button><span className="panel-title-icon violet"><Icon name="bell" size={18} /></span><div><b>알림 설정</b><small>점장 이슈·보고서 알림</small></div><Icon name="chevron" size={17} /></button>
+        <button onClick={onSwitch}><span className="panel-title-icon green"><Icon name="users" size={18} /></span><div><b>점장 화면 보기</b><small>매장 점장 화면으로 전환</small></div><Icon name="chevron" size={17} /></button>
+      </div>
+    </section>
+  )
+}
+
 function MyPage({ onSwitch }: { onSwitch: () => void }) {
   return (
     <section className="management-page">
@@ -862,13 +958,23 @@ function MyPage({ onSwitch }: { onSwitch: () => void }) {
   )
 }
 
-function ManagerApp({ onSwitch, costs, setCosts, myReports, myIssues, setReports, setIssues, onSendReport, onSendIssue }: { onSwitch: () => void; costs: CostItem[]; setCosts: Dispatch<SetStateAction<CostItem[]>>; myReports: ReportItem[]; myIssues: IssueItem[]; setReports: Dispatch<SetStateAction<ReportItem[]>>; setIssues: Dispatch<SetStateAction<IssueItem[]>>; onSendReport: (report: ReportItem) => void; onSendIssue: (issue: IssueItem) => void }) {
+function ManagerApp({ onSwitch, costs, setCosts, myReports, myIssues, setReports, setIssues, onSendReport, onSendIssue, commands, onCompleteCommand }: { onSwitch: () => void; costs: CostItem[]; setCosts: Dispatch<SetStateAction<CostItem[]>>; myReports: ReportItem[]; myIssues: IssueItem[]; setReports: Dispatch<SetStateAction<ReportItem[]>>; setIssues: Dispatch<SetStateAction<IssueItem[]>>; onSendReport: (report: ReportItem) => void; onSendIssue: (issue: IssueItem) => void; commands: CommandItem[]; onCompleteCommand: (id: number) => void }) {
   const [active, setActive] = useState('홈')
-  const [resolved, setResolved] = useState<string[]>([])
   const [toast, setToast] = useState('')
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [statuses, setStatuses] = useState<Record<string, CheckStatus>>({})
+  const [sentKeys, setSentKeys] = useState<string[]>([])
+  const [schedules, setSchedules] = useState<ScheduleItem[]>(initialSchedules)
+  const checklist: ChecklistState = { values, setValues, statuses, setStatuses, sentKeys, setSentKeys }
 
-  function handleAction(id: string, message: string) {
-    setResolved((current) => [...current, id])
+  const pending = commands.filter((command) => !command.done)
+  const todaySchedules = sortSchedules(schedules.filter((item) => item.day === todayDay))
+  const phaseDone = (key: ChecklistPhaseKey) => managerChecklist.filter((item) => phaseOf(item) === key && statuses[item.id]).length
+  const phaseTotal = (key: ChecklistPhaseKey) => managerChecklist.filter((item) => phaseOf(item) === key).length
+  const checkDone = phaseDone('open') + phaseDone('close')
+  const checkRate = Math.round(checkDone / managerChecklist.length * 100)
+
+  function showToast(message: string) {
     setToast(message)
     window.setTimeout(() => setToast(''), 2200)
   }
@@ -895,50 +1001,40 @@ function ManagerApp({ onSwitch, costs, setCosts, myReports, myIssues, setReports
               </section>
 
               <section className="today-summary">
-                <div><span className="summary-icon red"><Icon name="alert" size={19} /></span><p><b>{Math.max(0, 2 - resolved.length)}</b><small>지금 처리</small></p></div>
+                <div><span className="summary-icon red"><Icon name="alert" size={19} /></span><p><b>{pending.length}</b><small>지금 처리</small></p></div>
                 <i />
-                <div><span className="summary-icon amber"><Icon name="clock" size={19} /></span><p><b>3</b><small>오늘 마감</small></p></div>
+                <div><span className="summary-icon amber"><Icon name="clock" size={19} /></span><p><b>{todaySchedules.length}</b><small>오늘 일정</small></p></div>
                 <i />
-                <div><span className="summary-icon mint"><Icon name="check" size={19} /></span><p><b>8/12</b><small>체크 완료</small></p></div>
+                <div><span className="summary-icon mint"><Icon name="check" size={19} /></span><p><b>{checkRate}%</b><small>체크 달성</small></p></div>
               </section>
 
               <section className="manager-section">
-                <div className="manager-section-title"><div><h2>지금 처리해 주세요</h2><span className="count-badge">{Math.max(0, 2 - resolved.length)}</span></div><small>긴급순</small></div>
+                <div className="manager-section-title"><div><h2>지금 처리해 주세요</h2><span className="count-badge">{pending.length}</span></div><small>SV 요청</small></div>
                 <div className="manager-cards">
-                  {!resolved.includes('temp') && (
-                    <article className="task-card task-critical">
-                      <div className="task-top"><span className="task-icon"><Icon name="thermometer" /></span><div><Badge tone="critical">기준 이탈</Badge><Badge tone="neutral">반복 3회</Badge></div><button aria-label="닫기" onClick={() => handleAction('temp', '이슈를 확인 대기로 보냈어요')}><Icon name="close" size={17} /></button></div>
-                      <h3>냉장고 온도가 높아요</h3>
-                      <p>주방 냉장고 2번 · 오늘 10:30 측정</p>
-                      <div className="evidence-panel"><span><small>측정값</small><b>7.2℃</b></span><i /><span><small>적용 기준</small><b>0~5℃</b></span></div>
-                      <div className="recommended"><span><Icon name="sparkle" size={14} /> 추천 조치</span><p>문이 잘 닫혔는지 확인하고, 30분 뒤 다시 측정해 주세요.</p></div>
-                      <button className="primary-action" onClick={() => handleAction('temp', '조치를 시작했어요')}>조치 시작하기 <Icon name="chevron" size={17} /></button>
+                  {pending.map((command) => (
+                    <article key={command.id} className="task-card task-critical command-card">
+                      <div className="task-top"><span className="task-icon"><Icon name="send" /></span><div><Badge tone="critical">SV 요청</Badge><Badge tone="neutral">{command.source} 답변</Badge></div></div>
+                      <h3>{command.title}</h3>
+                      <p>{command.source}: {command.refTitle}</p>
+                      <div className="evidence-panel"><span><small>요청 시각</small><b>{command.sentAt}</b></span><i /><span><small>처리 기한</small><b>{command.due ? `오늘 ${command.due}까지` : '기한 없음'}</b></span></div>
+                      <button className="primary-action" onClick={() => { onCompleteCommand(command.id); showToast('처리 완료를 SV에게 알렸어요') }}>처리 완료 <Icon name="arrow" size={17} /></button>
                     </article>
-                  )}
-                  {!resolved.includes('review') && (
-                    <article className="task-card task-ai">
-                      <div className="task-top"><span className="task-icon ai"><Icon name="sparkle" /></span><div><Badge tone="info">AI 생성</Badge><Badge tone="neutral">리뷰 5건</Badge></div></div>
-                      <h3>대기 시간이 길다는 리뷰가 늘었어요</h3>
-                      <p>최근 7일 · 네이버 3건 / 배민 2건</p>
-                      <div className="ai-summary"><span><Icon name="sparkle" size={13} /> AI 요약</span><p>점심 피크 시간에 주문 대기가 반복되고 있어요. 같은 시간대 근무 인원 부족 기록이 2회 있습니다.</p></div>
-                      <button className="link-row">근거 리뷰 5건 보기 <Icon name="chevron" size={15} /></button>
-                      <button className="secondary-action" onClick={() => handleAction('review', '리뷰 조치를 시작했어요')}>조치 시작하기 <Icon name="chevron" size={17} /></button>
-                    </article>
-                  )}
-                  {resolved.length >= 2 && <div className="all-clear"><span><Icon name="arrow" /></span><h3>긴급한 일을 모두 확인했어요</h3><p>새로운 이슈가 생기면 바로 알려드릴게요.</p></div>}
+                  ))}
+                  {pending.length === 0 && <div className="all-clear"><span><Icon name="arrow" /></span><h3>SV 요청을 모두 처리했어요</h3><p>보고서나 이슈에 SV가 조치를 요청하면 여기에 표시돼요.</p></div>}
                 </div>
               </section>
 
               <section className="manager-section deadline-section">
-                <div className="manager-section-title"><div><h2>오늘 마감이 있어요</h2><span className="count-badge neutral">3</span></div><small>마감순</small></div>
+                <div className="manager-section-title"><div><h2>오늘 이런 일정이 있어요</h2><span className="count-badge neutral">{todaySchedules.length + 1}</span></div><small>시간순</small></div>
                 <div className="deadline-list">
-                  <button><span className="deadline-time urgent"><b>16:00</b><small>1시간 20분 남음</small></span><span className="deadline-copy"><b>B업체 발주 마감</b><small>추천 발주 8개 품목</small></span><Badge tone="warning">발주 전</Badge><Icon name="chevron" size={17} /></button>
-                  <button><span className="deadline-time"><b>18:00</b><small>오늘</small></span><span className="deadline-copy"><b>중간 체크</b><small>4개 항목 중 2개 완료</small></span><span className="progress-ring">2/4</span><Icon name="chevron" size={17} /></button>
-                  <button><span className="deadline-time"><b>22:30</b><small>마감 전</small></span><span className="deadline-copy"><b>일일 마감 체크</b><small>영업 종료 후 진행</small></span><Icon name="chevron" size={17} /></button>
+                  <button onClick={() => setActive('관리')}><span className="deadline-time"><b>{checkRate}%</b><small>체크 달성률</small></span><span className="deadline-copy"><b>관리자 일일 체크리스트</b><small>오픈 {phaseDone('open')}/{phaseTotal('open')} · 마감 {phaseDone('close')}/{phaseTotal('close')}</small><span className="check-rate-bar"><i style={{ width: `${checkRate}%` }} /></span></span><span className="progress-ring" style={{ background: `conic-gradient(#4770c8 ${checkRate * 3.6}deg, #dbe4f8 0deg)` }}><em>{checkDone}/{managerChecklist.length}</em></span><Icon name="chevron" size={17} /></button>
+                  {todaySchedules.map((item) => (
+                    <button key={item.id} onClick={() => setActive('관리')}><span className={`deadline-time ${item.category === '발주' ? 'urgent' : ''}`}><b>{item.time}</b><small>{item.category}</small></span><span className="deadline-copy"><b>{item.title}</b><small>{item.detail || '캘린더 일정'}</small></span><span /><Icon name="chevron" size={17} /></button>
+                  ))}
                 </div>
               </section>
             </>
-          ) : active === '관리' ? <ManagementPage onToast={setToast} onSendIssue={onSendIssue} /> : active === '보고' ? <ReportPage costs={costs} setCosts={setCosts} myReports={myReports} myIssues={myIssues} setReports={setReports} setIssues={setIssues} onToast={setToast} onSendReport={onSendReport} onSendIssue={onSendIssue} /> : <MyPage onSwitch={onSwitch} />}
+          ) : active === '관리' ? <ManagementPage onToast={showToast} onSendIssue={onSendIssue} checklist={checklist} schedules={schedules} setSchedules={setSchedules} /> : active === '보고' ? <ReportPage costs={costs} setCosts={setCosts} myReports={myReports} myIssues={myIssues} setReports={setReports} setIssues={setIssues} onToast={setToast} onSendReport={onSendReport} onSendIssue={onSendIssue} /> : <MyPage onSwitch={onSwitch} />}
         </main>
 
         <nav className="bottom-nav" aria-label="점장 메뉴">
@@ -962,7 +1058,8 @@ export default function App() {
   const [costs, setCosts] = useState<CostItem[]>(initialCosts)
   const [reports, setReports] = useState<ReportItem[]>(initialReports)
   const [managerIssues, setManagerIssues] = useState<IssueItem[]>(initialIssues)
+  const [commands, setCommands] = useState<CommandItem[]>(initialCommands)
   return <div className="mobile-frame"><div className="mobile-scroll">{view === 'dashboard'
-    ? <Dashboard onSwitch={() => setView('manager')} costs={costs} reports={reports} managerIssues={managerIssues} />
-    : <ManagerApp onSwitch={() => setView('dashboard')} costs={costs} setCosts={setCosts} myReports={reports.filter((report) => report.store === managerStore)} myIssues={managerIssues.filter((issue) => issue.store === managerStore)} setReports={setReports} setIssues={setManagerIssues} onSendReport={(report) => setReports((current) => [report, ...current])} onSendIssue={(issue) => setManagerIssues((current) => [issue, ...current])} />}</div></div>
+    ? <Dashboard onSwitch={() => setView('manager')} costs={costs} reports={reports} managerIssues={managerIssues} commands={commands} onSendCommand={(command) => setCommands((current) => [command, ...current])} />
+    : <ManagerApp onSwitch={() => setView('dashboard')} costs={costs} setCosts={setCosts} myReports={reports.filter((report) => report.store === managerStore)} myIssues={managerIssues.filter((issue) => issue.store === managerStore)} setReports={setReports} setIssues={setManagerIssues} onSendReport={(report) => setReports((current) => [report, ...current])} onSendIssue={(issue) => setManagerIssues((current) => [issue, ...current])} commands={commands} onCompleteCommand={(id) => setCommands((current) => current.map((command) => command.id === id ? { ...command, done: true } : command))} />}</div></div>
 }
