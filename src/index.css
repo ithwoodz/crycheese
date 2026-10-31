@@ -1,7 +1,15 @@
 @import 'tailwindcss';
 
+@font-face {
+  font-family: 'Pretendard Variable';
+  src: url('/src/assets/fonts/PretendardVariable.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 @theme {
-  --font-sans: Pretendard, "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 @layer base {
@@ -18,7 +26,7 @@
     background: #f4f6f9;
   }
 
-  button, input {
+  button, input, textarea, select, option, optgroup, ::file-selector-button {
     font-family: inherit;
   }
 
@@ -249,7 +257,7 @@
 .bottom-nav button { display: flex; min-width: 58px; height: 60px; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #929aa6; }
 .bottom-nav button > span { position: relative; }.bottom-nav button i { position: absolute; top: -7px; right: -10px; display: grid; width: 16px; height: 16px; place-items: center; border-radius: 50%; background: #e34e4a; color: white; font-size: 8px; font-style: normal; font-weight: 800; }
 .bottom-nav small { font-size: 9px; font-weight: 700; }.bottom-nav button.active { color: #315dbd; }
-.toast { position: fixed; z-index: 50; bottom: 92px; left: 50%; display: flex; align-items: center; gap: 7px; border-radius: 8px; background: #172235; padding: 11px 16px; color: white; font-size: 11px; transform: translateX(-50%); box-shadow: 0 8px 24px rgba(10,20,35,.22); }
+.toast { position: fixed; z-index: 100; bottom: 92px; left: 50%; display: flex; width: max-content; max-width: calc(100vw - 32px); overflow-wrap: anywhere; pointer-events: none; align-items: center; gap: 7px; border-radius: 8px; background: #172235; padding: 11px 16px; color: white; font-size: 11px; transform: translateX(-50%); box-shadow: 0 8px 24px rgba(10,20,35,.22); }
 .placeholder-page { display: flex; min-height: 70vh; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .placeholder-icon { display: grid; width: 58px; height: 58px; place-items: center; border-radius: 15px; background: #eaf0ff; color: #3f67c1; }
 .placeholder-page > p { margin-top: 19px; color: #8791a0; font-size: 11px; }.placeholder-page h1 { margin-top: 4px; font-size: 26px; font-weight: 850; }.placeholder-page > span:not(.placeholder-icon) { max-width: 360px; margin-top: 8px; color: #737f90; font-size: 12px; line-height: 1.6; }.placeholder-page button { display: flex; height: 40px; align-items: center; gap: 7px; border-radius: 8px; margin-top: 22px; background: #294f9f; padding: 0 16px; color: white; font-size: 11px; font-weight: 800; }

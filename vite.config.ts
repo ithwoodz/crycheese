@@ -1,4 +1,5 @@
-import { defineConfig, type HtmlTagDescriptor, type Plugin } from 'vite'
+import { defineConfig, loadEnv, type HtmlTagDescriptor, type Plugin } from 'vite'
+import { runnApi } from './server/api'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import fs from 'node:fs'
@@ -19,6 +20,7 @@ export default defineConfig(({ mode }) => {
       minify: !emitSourcemaps,
     },
     plugins: [
+      runnApi(loadEnv(mode, process.cwd(), '')),
 react(),
       tailwindcss(),
       figmaSiteConfiguration(siteConfiguration),
