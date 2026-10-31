@@ -40,6 +40,43 @@ function text(value: unknown, max = 2000): string {
     .trim()
     .slice(0, max)
 }
+// 점장이 주간 보고서를 보낼 때 함께 보내는 이번 주 이슈·조치·매출·비용 요약입니다.
+function weeklySnapshot(value: unknown) {
+  if (!value || typeof value !== "object") return undefined
+  const w = value as Record<string, unknown>
+  const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "")
+  const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0)
+  const list = (v: unknown, max: number) => (Array.isArray(v) ? v.slice(0, max) : []) as Record<string, unknown>[]
+  return {
+    start: day(w.start),
+    end: day(w.end),
+    previousSales: num(w.previousSales),
+    issues: list(w.issues, 40).map((i) => ({
+      title: text(i.title, 200),
+      kind: text(i.kind, 40),
+      severity: i.severity === "critical" ? "critical" : "warning",
+      state: ["done", "doing", "open", "other"].includes(String(i.state)) ? String(i.state) : "other",
+      status: text(i.status, 40),
+      date: day(i.date),
+      request: text(i.request, 500),
+      doneAt: text(i.doneAt, 40),
+    })),
+    sales: list(w.sales, 14).map((r) => ({ date: day(r.date), amount: num(r.amount) })),
+    costs: list(w.costs, 14).map((r) => ({ date: day(r.date), amount: num(r.amount) })),
+    task: w.task && typeof w.task === "object"
+      ? { done: num((w.task as Record<string, unknown>).done), total: num((w.task as Record<string, unknown>).total) }
+      : undefined,
+    waste: list(w.waste, 60).map((r) => ({
+      date: day(r.date),
+      item: text(r.item, 100),
+      qty: num(r.qty),
+      unit: text(r.unit, 20),
+      reason: text(r.reason, 40),
+      detail: text(r.detail, 500),
+      amount: num(r.amount),
+    })),
+  }
+}
 function uuid(value: unknown): string {
   const id = String(value || "")
   if (
@@ -737,6 +774,7 @@ export function runnApi(env: Record<string, string>): Plugin {
           summary: text(p.summary, 10000),
           metrics: {
             ...metric,
+            ...(weeklySnapshot(p.weekly) ? { weekly: weeklySnapshot(p.weekly) } : {}),
             periodStart: data.periodStart,
             periodEnd: data.periodEnd,
             generatedBy: "deterministic-template",

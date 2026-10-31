@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { request } from './api'
 import { addDays, applyCheck, validDay, type Issue, type Row, type Snapshot } from './domain'
+import { BrandLogo } from './BrandLogo'
 
 export type LiveDialog = { type: 'date' | 'settings' | 'order' | 'measurement' | 'report' | 'issue' | 'issues'; issue?: Issue; report?: Row }
 type PendingCheck = { store: string; date: string; item: string; desired: boolean; saved: boolean; note:string; savedNote:string }
@@ -52,6 +53,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false)
   const [loading,setLoading] = useState(true)
   const [message, notify] = useState('')
+  // 첫 화면을 못 불러온 오류는 알림처럼 사라지면 안 되므로 따로 보관합니다.
+  const [loadError, setLoadError] = useState('')
   const [dialog, open] = useState<LiveDialog | null>(null)
   const latest = useRef(data); latest.current = data
   const pending = useRef(new Map<string, PendingCheck>())
@@ -67,9 +70,9 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     try {
       let next = await request<Snapshot>(`/bootstrap?date=${date}`, {signal:abort.signal})
       for (const check of pending.current.values()) next = applyCheck(next, check.store, check.date, check.item, check.desired, check.note)
-      if (current === sequence.current) { latest.current = next; setData(next) }
+      if (current === sequence.current) { latest.current = next; setData(next); setLoadError('') }
     } catch (error) {
-      if (!abort.signal.aborted) { notify((error as Error).message); throw error }
+      if (!abort.signal.aborted) { notify((error as Error).message); setLoadError((error as Error).message); throw error }
     } finally {if(current === sequence.current)setLoading(false)}
   }, [date])
   useEffect(() => { void reload().catch(() => {}); return () => controller.current?.abort() }, [reload])
@@ -120,7 +123,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     changeDate(next); open(null)
     try { localStorage.setItem('runn-review-date-v1', next) } catch { /* Optional browser storage. */ }
   }
-  if (!data) return <div className="manager-bg"><div className="manager-shell"><header className="manager-header"><div className="manager-brand"><span className="brand-mark small"><span/><span/><span/></span><b>RUNN</b></div></header><main className="manager-main"><section className="manager-welcome"><h1>운영 기록을 불러오고 있어요</h1>{message && <><p>{message}</p><button onClick={() => void reload().catch(() => {})}>다시 시도</button></>}</section></main></div></div>
+  if (!data) return <div className="manager-bg"><div className="manager-shell"><header className="manager-header"><div className="manager-brand"><BrandLogo /><b>CRBU</b></div></header><main className="manager-main"><section className="manager-welcome">{loadError ? <><h1>운영 기록을 불러오지 못했어요</h1><p>{loadError}</p><button className="date-chip" onClick={() => void reload().catch(() => {})}>다시 시도</button></> : <h1>운영 기록을 불러오고 있어요</h1>}</section></main></div></div>
   return <Context.Provider value={{data,busy:busy || loading,message,dialog,open,notify,setDate,reload,run,saveCheck,
     switchSession:(role,store=data.session.storeId) => run(() => request('/session',{method:'POST',body:{role,storeId:store}}),'')}}>{children}</Context.Provider>
 }
