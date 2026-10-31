@@ -113,7 +113,7 @@ export function validDay(day: string): boolean {
     new Date(`${day}T12:00:00Z`).toISOString().slice(0, 10) === day
 }
 
-export function applyCheck(snapshot: Snapshot, store: string, date: string, item: string, done: boolean): Snapshot {
+export function applyCheck(snapshot: Snapshot, store: string, date: string, item: string, done: boolean, note = ''): Snapshot {
   if (snapshot.date !== date) return snapshot
   const existing = snapshot.checks.find(c => c.store_id === store && c.business_date === date && c.item_id === item)
   const source = snapshot.tasks.find(c => c.store_id === store && c.item_id === item)
@@ -122,7 +122,7 @@ export function applyCheck(snapshot: Snapshot, store: string, date: string, item
   return {
     ...snapshot,
     checks: [...snapshot.checks.filter(c => !(c.store_id === store && c.business_date === date && c.item_id === item)),
-      {store_id: store, business_date: date, item_id: item, done}],
+      {store_id: store, business_date: date, item_id: item, done, note}],
     metrics: snapshot.metrics.map(m => m.store_id !== store ? m : {...m,
       taskDone: Math.max(0, Math.min(m.taskTotal, m.taskDone + delta)),
       taskRate: m.taskTotal ? Math.max(0, Math.min(m.taskTotal, m.taskDone + delta)) / m.taskTotal * 100 : 0,

@@ -238,6 +238,7 @@ export function runnApi(env: Record<string, string>): Plugin {
       waste,
       sales,
       visits,
+      importedReports,
     ] = await Promise.all([
       read("t2_r03_temperature_records", atDay + "&order=item_id"),
       read("t2_r10_oil_acidity_records", atDay),
@@ -276,6 +277,7 @@ export function runnApi(env: Record<string, string>): Plugin {
         "t2_r11_supervisor_visits",
         `date=lte.${date}${scope}&service_pct=not.is.null&order=date.desc`,
       ),
+      read("t2_r14_weekly_reports", `week_start=lte.${date}${scope}&order=week_start.desc`),
     ])
     const scopedStores = refs.stores.filter(
       (s: Row) => session.role === "sv" || s.store_id === session.storeId,
@@ -372,6 +374,18 @@ export function runnApi(env: Record<string, string>): Plugin {
         hasMonthSales: storeSales.some(r => r.date >= monthStart),
       }
     })
+    const latestImportedReports = new Map<string, Row>()
+    for (const report of importedReports) {
+      if (addDays(report.week_start, 6) <= date && !latestImportedReports.has(report.store_id)) latestImportedReports.set(report.store_id, report)
+    }
+    const sourceReports = [...latestImportedReports.values()].map(report => ({
+      id:`source:${report.store_id}:${report.week_start}`,store_id:report.store_id,
+      business_date:addDays(report.week_start,6),week_start:report.week_start,
+      created_at:`${addDays(report.week_start,6)}T12:00:00Z`,read_only:true,
+      title:`${report.week_start} ${refs.stores.find((s: Row) => s.store_id === report.store_id)?.store_name || '매장'} 주간 운영 보고`,
+      summary:report.manager_opinion || '등록된 운영 의견이 없습니다.',
+      metrics:{taskRate:(1-Number(report.daily_task_miss_rate))*100,waste:Number(report.waste_amount),wasteRate:Number(report.waste_rate_pct),selfScore:report.self_check_score,selfMax:report.self_check_max},
+    }))
     return {
       session,
       date,
@@ -390,7 +404,7 @@ export function runnApi(env: Record<string, string>): Plugin {
       actions,
       events,
       costs,
-      reports,
+      reports:[...reports,...sourceReports],
       orders,
       inventory,
       lots,

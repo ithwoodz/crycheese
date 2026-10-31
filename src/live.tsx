@@ -3,13 +3,13 @@ import { request } from './api'
 import { addDays, applyCheck, validDay, type Issue, type Row, type Snapshot } from './domain'
 
 export type LiveDialog = { type: 'date' | 'settings' | 'order' | 'measurement' | 'report' | 'issue' | 'issues'; issue?: Issue; report?: Row }
-type PendingCheck = { store: string; date: string; item: string; desired: boolean; saved: boolean }
+type PendingCheck = { store: string; date: string; item: string; desired: boolean; saved: boolean; note:string; savedNote:string }
 type LiveContext = {
   data: Snapshot; busy: boolean; message: string; dialog: LiveDialog | null
   open: (dialog: LiveDialog | null) => void; notify: (message: string) => void
   setDate: (date: string) => void; reload: () => Promise<void>
   run: (task: () => Promise<unknown>, message: string) => Promise<boolean>
-  saveCheck: (item: string, done: boolean) => void
+  saveCheck: (item: string, done: boolean, status?: 'ok'|'bad') => void
   switchSession: (role: 'sv' | 'manager', store?: string) => Promise<boolean>
 }
 const Context = createContext<LiveContext | null>(null)
@@ -26,7 +26,8 @@ export function dayChecks(data: Snapshot, store = data.session.storeId): (Row & 
   return data.taskTemplates.map(template => {
     const override = data.checks.find(c => c.store_id === store && c.item_id === template.item_id)
     const original = data.tasks.find(c => c.store_id === store && c.item_id === template.item_id)
-    return {...template, done: override ? override.done : original?.done === 'Y'}
+    const done = override ? override.done : original?.done === 'Y'
+    return {...template, done, status:override?.note === 'bad' ? 'bad' : done ? 'ok' : null}
   })
 }
 export function storeCards(data: Snapshot) {
@@ -47,6 +48,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     try { const saved = localStorage.getItem('runn-review-date-v1'); return saved && validDay(saved) ? saved : '2026-08-12' } catch { return '2026-08-12' }
   })
   const [data, setData] = useState<Snapshot | null>(null)
+  const latestDate = useRef(date);latestDate.current=date
   const [busy, setBusy] = useState(false)
   const [loading,setLoading] = useState(true)
   const [message, notify] = useState('')
@@ -57,13 +59,14 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const sequence = useRef(0)
   const lock = useRef(false)
   const reload = useCallback(async () => {
+    if(date !== latestDate.current) return
     controller.current?.abort()
     const abort = new AbortController(); controller.current = abort
     const current = ++sequence.current
     setLoading(true)
     try {
       let next = await request<Snapshot>(`/bootstrap?date=${date}`, {signal:abort.signal})
-      for (const check of pending.current.values()) next = applyCheck(next, check.store, check.date, check.item, check.desired)
+      for (const check of pending.current.values()) next = applyCheck(next, check.store, check.date, check.item, check.desired, check.note)
       if (current === sequence.current) { latest.current = next; setData(next) }
     } catch (error) {
       if (!abort.signal.aborted) { notify((error as Error).message); throw error }
@@ -78,16 +81,18 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     catch (error) { notify((error as Error).message); return false }
     finally { lock.current = false; setBusy(false) }
   }
-  function saveCheck(item: string, done: boolean) {
+  function saveCheck(item: string, done: boolean, status?: 'ok'|'bad') {
     const current = latest.current
     if (!current || current.date !== date || loading) return
     const store = current.session.storeId
     const key = `${store}:${current.date}:${item}`
     const existing = pending.current.get(key)
     const saved = dayChecks(current).find(c => c.item_id === item)?.done ?? false
-    const entry = existing || {store, date:current.date, item, desired:done, saved}
+    const savedNote = current.checks.find(c => c.store_id === store && c.item_id === item)?.note || ''
+    const entry = existing || {store, date:current.date, item, desired:done, saved, note:status || '', savedNote}
     entry.desired = done
-    const next = applyCheck(current, store, current.date, item, done)
+    entry.note = status || ''
+    const next = applyCheck(current, store, current.date, item, done, entry.note)
     latest.current = next; setData(next)
     if (existing) return
     pending.current.set(key, entry)
@@ -95,13 +100,15 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       try {
         while (true) {
           const desired = entry.desired
-          await request('/checks', {method:'POST', body:{store_id:store,business_date:entry.date,item_id:item,done:desired},keepalive:true})
+          const note = entry.note
+          await request('/checks', {method:'POST', body:{store_id:store,business_date:entry.date,item_id:item,done:desired,note},keepalive:true})
           entry.saved = desired
-          if (entry.desired === desired) break
+          entry.savedNote = note
+          if (entry.desired === desired && entry.note === note) break
         }
       } catch {
         const current = latest.current
-        if (current) { const next = applyCheck(current,store,entry.date,item,entry.saved); latest.current = next; setData(next) }
+        if (current) { const next = applyCheck(current,store,entry.date,item,entry.saved,entry.savedNote); latest.current = next; setData(next) }
         notify('점검 내용을 저장하지 못했어요. 연결을 확인하고 다시 시도해 주세요.')
       } finally { pending.current.delete(key) }
     })()
